@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lịch sử điểm danh - {{ class_name }}</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap"
+    />
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        background: #f4f7f9;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+      .container {
+        background: #fff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        max-width: 600px;
+        width: 100%;
+      }
+      h2 {
+        text-align: center;
+        color: #003366;
+      }
+      table {
+        width: 100%;
+        overflow: hidden;
+        border-collapse: collapse;
+		border-radius: 10px;
+        margin-top: 15px;
+		box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+      }
+      th,
+      td {
+        padding: 10px;
+        border-bottom: 1px solid #ccc;
+        text-align: left;
+      }
+      th {
+        background: #004085;
+        color: white;
+      }
+      a {
+		padding: 12px;
+        display: block;
+        margin-top: 15px;
+        text-align: center;
+        color: #004085;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Lịch sử điểm danh - {{ class_name }}</h2>
+      <table>
+        <tr>
+          <th>Tên</th>
+          <th>Ngày</th>
+          <th>Giờ</th>
+        </tr>
+
+        {% for name, date, first_time, status in records %}
+        <tr>
+          <td>{{ name }}</td>
+          <td>{{ date }}</td>
+          <td>{{ first_time }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+
+      <a href="{{ url_for('class_home', class_name=class_name) }}"
+        >← Quay lại</a
+      >
+    </div>
+  </body>
+</html>

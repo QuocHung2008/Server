@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bảng tổng điểm danh</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            margin: 0; 
+            padding: 40px;
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            min-height: 100vh;
+            text-align: center; /* ✅ căn giữa toàn trang */
+        }
+
+        .container {
+            background: #fff; 
+            padding: 30px; 
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            width: 100%; 
+            max-width: 900px;
+        }
+
+        h1 {
+            color: #003366; 
+            border-bottom: 2px solid #003366;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%; 
+            border-collapse: collapse;
+            margin-top: 10px; 
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 12px; 
+            border-bottom: 1px solid #ddd;
+            text-align: center;       /* ✅ căn giữa chữ & số */
+            vertical-align: middle;   /* ✅ căn giữa theo chiều dọc */
+            word-wrap: break-word;    
+            white-space: normal;      
+        }
+
+        th {
+            background-color: #004085; 
+            color: white;
+        }
+
+        tr:nth-child(even) { 
+            background-color: #f9f9f9; 
+        }
+
+        /* ✅ Cột “Danh sách vắng” riêng biệt */
+        td.absent-list {
+            text-align: left;           /* căn lề trái */
+            max-width: 280px;
+        }
+
+        td.absent-list ol {
+            margin: 0;
+            padding-left: 20px;         /* khoảng cách để số thứ tự đẹp hơn */
+        }
+
+        td.absent-list li {
+            margin-bottom: 4px;
+            line-height: 1.4em;
+        }
+
+        a {
+            text-decoration: none; 
+            color: #003366; 
+            font-weight: 600;
+        }
+
+        a:hover { 
+            text-decoration: underline; 
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            margin-top: 10px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            background-color: #003366;
+            color: #fff;
+        }
+
+        .btn:hover { 
+            opacity: 0.9; 
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📊 Bảng tổng điểm danh</h1>
+    <table>
+        <tr>
+            <th>Tên lớp</th>
+            <th>Số lượng có mặt</th>
+            <th>Số lượng vắng</th>
+            <th>Danh sách vắng</th>
+            <th>Tải CSV</th>
+        </tr>
+        {% for cls in classes %}
+        <tr>
+            <td><a href="/class/{{ cls.class }}/">{{ cls.class }}</a></td>
+            <td style="color: green;">{{ cls.present }}</td>
+            <td style="color: red;">{{ cls.absent }}</td>
+            <td class="absent-list">
+                {% if cls.absent_names %}
+                    <ol>
+                        {% for n in cls.absent_names.split(", ") %}
+                            <li>{{ n }}</li>
+                        {% endfor %}
+                    </ol>
+                {% else %}
+                    <em>Không có</em>
+                {% endif %}
+            </td>
+            <td><a class="btn" href="/class/{{ cls.class }}/export_excel">Excel</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+</body>
+</html>

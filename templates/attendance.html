@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bảng điểm danh {{ class_name }}</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap"
+    />
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        background-color: #f4f7f9;
+        color: #333;
+        margin: 0;
+        padding: 40px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+      }
+      .container {
+        background: #fff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        width: 100%;
+        max-width: 600px;
+      }
+      h1 {
+        color: #003366;
+        text-align: center;
+        border-bottom: 2px solid #003366;
+        padding-bottom: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      th,
+      td {
+        padding: 12px;
+        border-bottom: 1px solid #ddd;
+      }
+      th {
+        background-color: #004085;
+        color: white;
+      }
+      tr:nth-child(even) {
+        background-color: #f9f9f9;
+      }
+      .btn {
+        display: inline-block;
+        padding: 12px 20px;
+        margin-top: 15px;
+        border-radius: 6px;
+        text-decoration: none;
+        text-align: center;
+        font-weight: 600;
+      }
+      .btn-primary {
+        background-color: #003366;
+        color: #fff;
+      }
+      .btn-index {
+        display: inline-block;
+        padding: 12px 260px;
+        background-color: #454c54ff;
+        color: #fff;
+      }
+      .btn-secondary {
+        background-color: #6c757d;
+        color: #fff;
+      }
+      .btn:hover {
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Điểm danh lớp {{ class_name }}</h1>
+      <a href="{{ url_for('index') }}" class="btn btn-index">Trang chủ</a>
+      <table>
+        <tr>
+          <th>Tên học sinh</th>
+          <th>Trạng thái</th>
+        </tr>
+        {% for s in students %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td style="color: {{ 'green' if s.status == 'Có mặt' else 'red' if s.status == 'Vắng' else '#E67E22' }}">
+            {{ s.status }}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      <a
+        href="{{ url_for('add_student', class_name=class_name) }}"
+        class="btn btn-primary"
+        >➕ Thêm học sinh</a
+      >
+      <a
+        href="{{ url_for('attendance_history', class_name=class_name) }}"
+        class="btn btn-secondary"
+        >🕓 Lịch sử điểm danh</a
+      >
+    </div>
+  </body>
+</html>
