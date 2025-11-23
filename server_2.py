@@ -5,13 +5,7 @@ import os, sqlite3, pickle, cv2, numpy as np, face_recognition
 import datetime, threading, time
 
 BASE_DIR = "classes"
-# ✅ Cải tiến 1: Tăng tolerance lên 0.45 (cân bằng giữa chính xác & nhận diện được)
-# ✅ Cải tiến 2: Dùng "cnn" model cho độ chính xác cao hơn (nếu có GPU)
-TOLERANCE = 0.45
-DETECTION_MODEL = "cnn"  # Đổi "hog" → "cnn" (chính xác hơn nhưng chậm hơn)
-
-# ✅ Nếu máy yếu, giữ "hog" nhưng tăng số lần upsample
-UPSAMPLE_TIMES = 1  # Tăng lên 2 nếu muốn phát hiện khuôn mặt xa hơn
+TOLERANCE, DETECTION_MODEL = 0.4, "hog"  # Giảm tolerance từ 0.5 → 0.4 để chính xác hơn
 
 app = Flask(__name__)
 LOCKS = {}
@@ -79,22 +73,6 @@ def record_attendance(class_name, name):
                       (name, today, time_str, status, iso))
             conn.commit()
         conn.close()
-
-# ✅ Cải tiến 3: Hàm tiền xử lý ảnh để tăng chất lượng
-def preprocess_image(img_bgr):
-    """Cải thiện chất lượng ảnh trước khi nhận diện"""
-    # Tăng độ sáng nếu ảnh quá tối
-    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    l = clahe.apply(l)
-    enhanced = cv2.merge([l, a, b])
-    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
-    
-    # Giảm nhiễu
-    denoised = cv2.fastNlMeansDenoisingColored(enhanced, None, 10, 10, 7, 21)
-    
-    return denoised
         
 @app.route("/")
 def index():
@@ -161,7 +139,7 @@ def add_student(class_name):
         return redirect(url_for("class_home", class_name=class_name))
     return render_template("add_student.html", class_name=class_name)
 
-# ✅ CẢI TIẾN 4: Thuật toán nhận diện mới (chính xác hơn nhiều)
+# ===== FIX: CHỈ TRẢ VỀ 1 KẾT QUẢ TỐT NHẤT =====
 @app.route("/class/<class_name>/recognize", methods=["POST"])
 def recognize(class_name):
     start_time = time.time()
@@ -187,27 +165,19 @@ def recognize(class_name):
     if img_bgr is None:
         return jsonify({"name": "Unknown", "error": "Invalid image"}), 400
     
-    # ✅ Áp dụng tiền xử lý ảnh
-    img_bgr = preprocess_image(img_bgr)
-    
     # Chuyển sang RGB
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     
-    # ✅ Tìm khuôn mặt với tham số tối ưu
-    locs = face_recognition.face_locations(
-        img_rgb, 
-        number_of_times_to_upsample=UPSAMPLE_TIMES,
-        model=DETECTION_MODEL
-    )
+    # Tìm tất cả khuôn mặt
+    locs = face_recognition.face_locations(img_rgb, model=DETECTION_MODEL)
     
     if len(locs) == 0:
         print(f"[{class_name}] Không phát hiện khuôn mặt | {time.time() - start_time:.3f}s")
         return jsonify({"name": "Unknown", "error": "No face detected"})
     
-    # ✅ Encode với model chính xác hơn
-    encs = face_recognition.face_encodings(img_rgb, locs, num_jitters=2)
+    encs = face_recognition.face_encodings(img_rgb, locs)
     
-    # Chọn khuôn mặt LỚN NHẤT (gần camera nhất)
+    # FIX: Chọn khuôn mặt LỚN NHẤT (gần camera nhất)
     best_face_idx = 0
     if len(locs) > 1:
         areas = [(loc[2] - loc[0]) * (loc[1] - loc[3]) for loc in locs]
@@ -215,41 +185,21 @@ def recognize(class_name):
     
     enc = encs[best_face_idx]
     
-    # ✅ Cải tiến 5: So sánh thông minh hơn với voting
+    # So sánh với database
     matches = face_recognition.compare_faces(data["encodings"], enc, TOLERANCE)
     dist = face_recognition.face_distance(data["encodings"], enc)
     
     recognized_name = "Unknown"
+    if len(dist) > 0:
+        best = np.argmin(dist)
+        if matches[best]:
+            recognized_name = data["names"][best]
+            record_attendance(class_name, recognized_name)
     
-    if True in matches:
-        # Lấy tất cả các match
-        matched_indices = [i for i, match in enumerate(matches) if match]
-        matched_names = [data["names"][i] for i in matched_indices]
-        matched_dists = [dist[i] for i in matched_indices]
-        
-        # ✅ Voting: Chọn tên xuất hiện nhiều nhất
-        from collections import Counter
-        name_counts = Counter(matched_names)
-        
-        # Nếu có tên xuất hiện nhiều lần → chọn tên đó
-        if name_counts:
-            best_name = name_counts.most_common(1)[0][0]
-            
-            # Lấy distance nhỏ nhất của tên đó
-            best_name_indices = [i for i, n in enumerate(matched_names) if n == best_name]
-            best_dist = min(matched_dists[i] for i in best_name_indices)
-            
-            # ✅ Chỉ chấp nhận nếu distance < ngưỡng an toàn
-            if best_dist < TOLERANCE * 0.9:  # 90% của tolerance để chắc chắn hơn
-                recognized_name = best_name
-                record_attendance(class_name, recognized_name)
-                print(f"[{class_name}] ✅ {recognized_name} (dist: {best_dist:.3f}) | {time.time() - start_time:.3f}s")
-            else:
-                print(f"[{class_name}] ⚠️ Không chắc chắn (dist: {best_dist:.3f})")
+    # PRINT và RETURN cùng 1 giá trị
+    print(f"[{class_name}] Nhận diện: {recognized_name} | {time.time() - start_time:.3f}s")
     
-    if recognized_name == "Unknown":
-        print(f"[{class_name}] ❌ Không nhận diện được | {time.time() - start_time:.3f}s")
-    
+    # Trả về JSON đúng format
     return jsonify({"name": recognized_name})
 
 @app.route("/class/<class_name>/history")

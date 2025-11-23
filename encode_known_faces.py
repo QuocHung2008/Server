@@ -1,10 +1,14 @@
 import os, hashlib, pickle, json, cv2, numpy as np
 from typing import Dict, List
 import face_recognition
+import sys
 
 KNOWN_FACES_DIR = "known_faces"
 ENCODINGS_FILE = "encodings.pkl"
 META_FILE = "encodings_meta.json"
+
+# ✅ GLOBAL FLAG để tránh recursive call
+_ENCODING_IN_PROGRESS = set()
 
 def compute_known_faces_hash(known_dir: str = KNOWN_FACES_DIR) -> str:
     entries = []
@@ -17,111 +21,220 @@ def compute_known_faces_hash(known_dir: str = KNOWN_FACES_DIR) -> str:
                 pass
     return hashlib.sha1("\n".join(entries).encode("utf-8")).hexdigest()
 
-# ✅ Cải tiến: Hàm tiền xử lý ảnh training
-def preprocess_training_image(img_path):
-    """Cải thiện chất lượng ảnh khi training"""
-    img = cv2.imread(img_path)
-    if img is None:
+def get_largest_face_location(face_locations):
+    """Trả về location của khuôn mặt lớn nhất"""
+    if not face_locations:
         return None
     
-    # Cân bằng histogram (tăng độ tương phản)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    l = clahe.apply(l)
-    enhanced = cv2.merge([l, a, b])
-    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    if len(face_locations) == 1:
+        return face_locations[0]
     
-    # Giảm nhiễu
-    denoised = cv2.fastNlMeansDenoisingColored(enhanced, None, 10, 10, 7, 21)
+    areas = [(loc[2] - loc[0]) * (loc[1] - loc[3]) for loc in face_locations]
+    largest_idx = np.argmax(areas)
     
-    # Chuyển sang RGB cho face_recognition
-    return cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB)
+    if len(face_locations) > 1:
+        print(f"    🎯 Tìm thấy {len(face_locations)} mặt, chọn mặt lớn nhất (diện tích: {areas[largest_idx]} px)")
+    
+    return face_locations[largest_idx]
 
 def build_encodings_for_class(class_dir: str) -> Dict[str, List]:
+    """Build encodings với protection chống lặp vô hạn"""
+    
+    # ✅ PROTECTION 1: Kiểm tra đang encode hay chưa
+    abs_class_dir = os.path.abspath(class_dir)
+    if abs_class_dir in _ENCODING_IN_PROGRESS:
+        print(f"⚠️ CẢNH BÁO: {class_dir} đang được encode, bỏ qua để tránh lặp!")
+        return {"encodings": [], "names": []}
+    
+    _ENCODING_IN_PROGRESS.add(abs_class_dir)
+    
+    try:
+        return _build_encodings_internal(class_dir)
+    finally:
+        # ✅ PROTECTION 2: Luôn remove khỏi set khi xong
+        _ENCODING_IN_PROGRESS.discard(abs_class_dir)
+
+def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
+    """Hàm encode thực sự (internal)"""
+    
     known_dir = os.path.join(class_dir, "known_faces")
     encodings_file = os.path.join(class_dir, "encodings.pkl")
     meta_file = os.path.join(class_dir, "encodings_meta.json")
 
+    print(f"\n{'='*70}")
+    print(f"🔧 BẮT ĐẦU ENCODE: {os.path.basename(class_dir)}")
+    print(f"{'='*70}")
+
+    # Load encoding cũ
     known_encodings, known_names = [], []
     if os.path.exists(encodings_file):
-        with open(encodings_file, "rb") as f:
-            data = pickle.load(f)
-            known_encodings = data.get("encodings", [])
-            known_names = data.get("names", [])
+        print("📂 Đang load encoding cũ...")
+        try:
+            with open(encodings_file, "rb") as f:
+                data = pickle.load(f)
+                known_encodings = data.get("encodings", [])
+                known_names = data.get("names", [])
+            print(f"   ✓ Đã load: {len(set(known_names))} người, {len(known_names)} ảnh")
+        except Exception as e:
+            print(f"   ⚠️ Lỗi load file cũ: {e}, sẽ tạo mới")
 
-    existing_people = set(known_names)
+    # Lấy danh sách người trong thư mục
+    if not os.path.exists(known_dir):
+        print(f"❌ Không tìm thấy thư mục: {known_dir}")
+        return {"encodings": [], "names": []}
+    
+    names_in_dir = set([d for d in os.listdir(known_dir) 
+                       if os.path.isdir(os.path.join(known_dir, d))])
 
-    names_in_dir = set(os.listdir(known_dir))
     updated_encodings, updated_names = [], []
 
-    # Giữ lại các encoding cũ nếu người đó vẫn còn trong thư mục
+    # Giữ encoding cũ
     for enc, n in zip(known_encodings, known_names):
         if n in names_in_dir:
             updated_encodings.append(enc)
             updated_names.append(n)
-
-    # Encode các người mới hoặc chưa có encoding
-    for name in sorted(names_in_dir):
-        if name in updated_names:
-            continue
+    
+    # ✅ CRITICAL: Tạo set tracking TRƯỚC vòng lặp
+    processed_names = set(updated_names)
+    
+    # Lọc người MỚI cần encode
+    new_people = sorted([n for n in names_in_dir if n not in processed_names])
+    
+    # Encode từng người
+    for idx, name in enumerate(new_people, 1):
         person_dir = os.path.join(known_dir, name)
-        if not os.path.isdir(person_dir):
+        
+        print(f"\n[{idx}/{len(new_people)}] 👤 {name}")
+        
+        # Lọc file ảnh hợp lệ
+        image_files = sorted([f for f in os.listdir(person_dir) 
+                            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))])
+        
+        if not image_files:
+            print(f"   ⚠️ Không có file ảnh!")
+            processed_names.add(name)  # ✅ Vẫn đánh dấu
             continue
         
-        person_encodings = []  # Lưu tất cả encoding của 1 người
+        print(f"   📷 Tìm thấy {len(image_files)} file ảnh")
         
-        for imgname in sorted(os.listdir(person_dir)):
+        person_encodings = []
+        
+        for img_idx, imgname in enumerate(image_files, 1):
             img_path = os.path.join(person_dir, imgname)
+            
             try:
-                # ✅ Dùng hàm tiền xử lý mới
-                image = preprocess_training_image(img_path)
-                if image is None:
-                    print(f"[WARN] Không đọc được {img_path}, bỏ qua")
+                # Đọc ảnh đơn giản
+                image = face_recognition.load_image_file(img_path)
+                
+                # Resize nếu quá lớn
+                h, w = image.shape[:2]
+                if w > 1600:
+                    scale = 1600 / w
+                    image = cv2.resize(image, (1600, int(h * scale)))
+                    print(f"   [{img_idx}/{len(image_files)}] 📐 {imgname} (resized)")
+                else:
+                    print(f"   [{img_idx}/{len(image_files)}] 🔍 {imgname}")
+                
+                # Tìm mặt với HOG (nhanh, ổn định)
+                face_locations = face_recognition.face_locations(image, model="hog")
+                
+                if not face_locations:
+                    print(f"      ⚠️ Không có mặt")
                     continue
                 
-                # ✅ Tăng num_jitters lên 5 cho training (chính xác hơn)
+                # Lấy mặt lớn nhất
+                largest_face = get_largest_face_location(face_locations)
+                
+                # Encode với cài đặt nhẹ
                 encs = face_recognition.face_encodings(
                     image, 
-                    num_jitters=5,  # Tăng từ 1 → 5 (chậm hơn nhưng chính xác hơn)
-                    model="large"   # Dùng model lớn hơn khi training
+                    known_face_locations=[largest_face],
+                    num_jitters=2  # Giảm xuống 2 cho nhanh
                 )
                 
                 if not encs:
-                    print(f"[WARN] Không có khuôn mặt trong {img_path}, bỏ qua")
+                    print(f"      ⚠️ Không encode được")
                     continue
                 
-                # ✅ Kiểm tra chất lượng encoding (loại bỏ ảnh mờ/xấu)
-                # Nếu có nhiều khuôn mặt → cảnh báo
-                if len(encs) > 1:
-                    print(f"[WARN] {img_path} có {len(encs)} khuôn mặt, chỉ lấy khuôn mặt đầu")
-                
                 person_encodings.append(encs[0])
-                print(f"[OK] Encoded {img_path} → {name}")
+                print(f"      ✅ OK")
                 
             except Exception as e:
-                print(f"[ERR] {img_path}: {e}")
+                print(f"      ❌ Lỗi: {str(e)[:50]}")
         
-        # ✅ Cải tiến: Lưu NHIỀU encoding cho mỗi người (tăng độ chính xác)
+        # Lưu kết quả
         if person_encodings:
             for enc in person_encodings:
                 updated_encodings.append(enc)
                 updated_names.append(name)
-            print(f"[INFO] {name}: Đã lưu {len(person_encodings)} ảnh")
+            print(f"   ✅ Thành công: {len(person_encodings)}/{len(image_files)} ảnh")
         else:
-            print(f"[WARN] {name}: Không có ảnh hợp lệ nào!")
-
-    known_encodings, known_names = updated_encodings, updated_names
+            print(f"   ⚠️ Không có ảnh nào hợp lệ!")
+        
+        # ✅ CRITICAL: Đánh dấu đã xử lý
+        processed_names.add(name)
 
     # Lưu file
+    print(f"\n💾 Đang lưu vào {encodings_file}...")
+    
     with open(encodings_file, "wb") as f:
-        pickle.dump({"encodings": known_encodings, "names": known_names}, f)
+        pickle.dump({"encodings": updated_encodings, "names": updated_names}, f)
+    
+    unique_people = len(set(updated_names))
+    total_images = len(updated_names)
+    
     with open(meta_file, "w") as f:
         json.dump({
             "hash": compute_known_faces_hash(known_dir),
-            "count": len(known_names),
-            "unique_people": len(set(known_names))
+            "count": total_images,
+            "unique_people": unique_people
         }, f)
 
-    print(f"[{os.path.basename(class_dir)}] ✅ Cập nhật xong ({len(set(known_names))} người, {len(known_names)} ảnh).")
-    return {"encodings": known_encodings, "names": known_names}
+    print(f"\n{'='*70}")
+    print(f"✅ HOÀN TẤT: {os.path.basename(class_dir)}")
+    print(f"{'='*70}")
+    print(f"👥 Tổng số người: {unique_people}")
+    print(f"📷 Tổng số ảnh: {total_images}")
+    if unique_people > 0:
+        print(f"📊 Trung bình: {total_images / unique_people:.1f} ảnh/người")
+    print(f"{'='*70}\n")
+    
+    return {"encodings": updated_encodings, "names": updated_names}
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python encode_known_faces_fixed.py <class_dir>")
+        print("Example: python encode_known_faces_fixed.py classes/Lop10A")
+        print("\nHoặc encode tất cả lớp:")
+        print("python encode_known_faces_fixed.py classes")
+        sys.exit(1)
+    
+    path = sys.argv[1]
+    
+    # Nếu truyền vào thư mục "classes" → encode tất cả lớp
+    if os.path.isdir(path) and os.path.basename(path) == "classes":
+        print(f"🔄 Sẽ encode tất cả lớp trong: {path}\n")
+        
+        class_dirs = []
+        for name in sorted(os.listdir(path)):
+            class_dir = os.path.join(path, name)
+            if os.path.isdir(class_dir):
+                known_faces = os.path.join(class_dir, "known_faces")
+                if os.path.exists(known_faces):
+                    class_dirs.append(class_dir)
+        
+        if not class_dirs:
+            print("❌ Không tìm thấy lớp nào có thư mục known_faces!")
+            sys.exit(1)
+        
+        print(f"Tìm thấy {len(class_dirs)} lớp\n")
+        
+        for i, class_dir in enumerate(class_dirs, 1):
+            print(f"\n{'#'*70}")
+            print(f"# [{i}/{len(class_dirs)}] {os.path.basename(class_dir)}")
+            print(f"{'#'*70}")
+            build_encodings_for_class(class_dir)
+    
+    # Encode 1 lớp cụ thể
+    else:
+        build_encodings_for_class(path)
