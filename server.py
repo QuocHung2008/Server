@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file
 from encode_known_faces import build_encodings_for_class
+from student_utils import load_student_list, get_student_name, create_default_student_list
 from openpyxl import Workbook
 import os, sqlite3, pickle, cv2, numpy as np, face_recognition
 import datetime, threading, time
 
 BASE_DIR = "classes"
-TOLERANCE, DETECTION_MODEL = 0.4, "hog"  # Giảm tolerance từ 0.5 → 0.4 để chính xác hơn
+TOLERANCE, DETECTION_MODEL = 0.4, "hog"
 
 app = Flask(__name__)
 LOCKS = {}
@@ -27,14 +28,25 @@ def get_status_by_time(now):
 def ensure_class(class_name):
     class_dir = os.path.join(BASE_DIR, class_name)
     os.makedirs(os.path.join(class_dir, "known_faces"), exist_ok=True)
+    
+    # Tạo file DS mẫu
+    create_default_student_list(class_name)
+    
+    # Database với cột student_id
     db_path = os.path.join(class_dir, "attendance.db")
     if not os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
         with conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, date TEXT,
-                    first_time TEXT, status TEXT, timestamp_iso TEXT)""")
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id TEXT,
+                    name TEXT,
+                    date TEXT,
+                    first_time TEXT,
+                    status TEXT,
+                    timestamp_iso TEXT)""")
         conn.close()
+    
     if class_name not in LOCKS:
         LOCKS[class_name] = threading.Lock()
     return class_dir
@@ -57,7 +69,10 @@ def reload_cache(class_name):
         with open(enc_path, "rb") as f:
             ENCODINGS_CACHE[class_name] = pickle.load(f)
 
-def record_attendance(class_name, name):
+def record_attendance(class_name, student_id):
+    """Ghi nhận điểm danh theo mã học sinh"""
+    student_name = get_student_name(class_name, student_id)
+    
     db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
     with LOCKS[class_name]:
         conn = sqlite3.connect(db_path)
@@ -67,10 +82,13 @@ def record_attendance(class_name, name):
         time_str = now.strftime("%H:%M:%S")
         iso = now.isoformat(sep=" ", timespec="seconds")
         status = get_status_by_time(now)
-        exists = c.execute("SELECT 1 FROM attendance WHERE name=? AND date=?", (name, today)).fetchone()
+        
+        exists = c.execute("SELECT 1 FROM attendance WHERE student_id=? AND date=?", 
+                          (student_id, today)).fetchone()
         if not exists:
-            c.execute("INSERT INTO attendance(name, date, first_time, status, timestamp_iso) VALUES(?,?,?,?,?)", 
-                      (name, today, time_str, status, iso))
+            c.execute("""INSERT INTO attendance(student_id, name, date, first_time, status, timestamp_iso) 
+                        VALUES(?,?,?,?,?,?)""", 
+                     (student_id, student_name, today, time_str, status, iso))
             conn.commit()
         conn.close()
         
@@ -79,72 +97,100 @@ def index():
     data = []
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     if not os.path.exists(BASE_DIR): os.makedirs(BASE_DIR)
+    
     for class_name in os.listdir(BASE_DIR):
         class_dir = os.path.join(BASE_DIR, class_name)
-        if not os.path.isdir(class_dir): continue
+        if not os.path.isdir(class_dir) or class_name == "DS": continue
         
         db_path = os.path.join(class_dir, "attendance.db")
-        enc_path = os.path.join(class_dir, "encodings.pkl")
         if not os.path.exists(db_path): continue
-        if not os.path.exists(enc_path): build_encodings_for_class(class_dir)
         
-        with open(enc_path, "rb") as f: enc_data = pickle.load(f)
-        all_people = sort_by_vietnamese_name(list(set(enc_data.get("names", []))))
+        # Load từ file DS
+        students = load_student_list(class_name)
+        if not students: continue
+        
+        all_student_names = sort_by_vietnamese_name(list(students.values()))
         
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
-        c.execute("SELECT DISTINCT name FROM attendance WHERE date=?", (today,))
-        present = {r[0] for r in c.fetchall()}
+        c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
+        present_ids = {r[0] for r in c.fetchall()}
         conn.close()
-        absent = [n for n in all_people if n not in present]
+        
+        absent_ids = [sid for sid in students.keys() if sid not in present_ids]
+        absent_names = [students[sid] for sid in absent_ids]
+        
         data.append({
-            "class": class_name, "present": len(present),
-            "absent": len(absent), "absent_names": ", ".join(absent)
+            "class": class_name,
+            "present": len(present_ids),
+            "absent": len(absent_ids),
+            "absent_names": ", ".join(absent_names)
         })
+    
     return render_template("index.html", classes=data)
 
 @app.route("/class/<class_name>/")
 def class_home(class_name):
     class_dir = ensure_class(class_name)
-    data = get_encodings_data(class_name)
+    students_dict = load_student_list(class_name)
+    
     db_path = os.path.join(class_dir, "attendance.db")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    cur.execute("SELECT name, status FROM attendance WHERE date=?", (today,))
+    cur.execute("SELECT student_id, status FROM attendance WHERE date=?", (today,))
     present_data = cur.fetchall()
     conn.close()
+    
     present = {r[0]: r[1] for r in present_data}
-    all_people = sort_by_vietnamese_name(list(set(data["names"])))
+    
     students = []
-    for name in all_people:
-        status = present.get(name, "Vắng")
-        students.append({"name": name, "status": status})
+    for student_id in sorted(students_dict.keys()):
+        student_name = students_dict[student_id]
+        status = present.get(student_id, "Vắng")
+        students.append({"name": student_name, "status": status})
+    
     return render_template("attendance.html", class_name=class_name, students=students)
 
 @app.route("/class/<class_name>/add_student", methods=["GET", "POST"])
 def add_student(class_name):
     class_dir = ensure_class(class_name)
+    
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
+        student_id = request.form.get("student_id", "").strip()
         files = request.files.getlist("images")
-        if not name or not files: return "Thiếu tên hoặc ảnh!", 400
-        person_dir = os.path.join(class_dir, "known_faces", name)
+        
+        if not student_id or not files:
+            return "Thiếu mã học sinh hoặc ảnh!", 400
+        
+        students = load_student_list(class_name)
+        if student_id not in students:
+            return f"Mã học sinh {student_id} không có trong danh sách!", 400
+        
+        # Lưu với tên thư mục = mã HS
+        person_dir = os.path.join(class_dir, "known_faces", student_id)
         os.makedirs(person_dir, exist_ok=True)
+        
         for file in files:
             fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
             file.save(os.path.join(person_dir, fname))
+        
         build_encodings_for_class(class_dir)
         reload_cache(class_name)
+        
         return redirect(url_for("class_home", class_name=class_name))
-    return render_template("add_student.html", class_name=class_name)
+    
+    # GET
+    students = load_student_list(class_name)
+    student_list = [{"id": sid, "name": name} for sid, name in sorted(students.items())]
+    
+    return render_template("add_student.html", class_name=class_name, students=student_list)
 
-# ===== FIX: CHỈ TRẢ VỀ 1 KẾT QUẢ TỐT NHẤT =====
 @app.route("/class/<class_name>/recognize", methods=["POST"])
 def recognize(class_name):
     start_time = time.time()
     
-    class_dir = ensure_class(class_name) 
+    class_dir = ensure_class(class_name)
     data = get_encodings_data(class_name)
     
     if 'image' not in request.files:
@@ -152,7 +198,6 @@ def recognize(class_name):
 
     img_bytes = request.files['image'].read()
     
-    # Lưu ảnh để debug
     last_img_path = os.path.join(class_dir, "last_upload.jpg")
     try:
         with open(last_img_path, "wb") as f:
@@ -160,15 +205,12 @@ def recognize(class_name):
     except Exception as e:
         print(f"Lỗi khi lưu ảnh: {e}")
 
-    # Giải mã ảnh
     img_bgr = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
     if img_bgr is None:
         return jsonify({"name": "Unknown", "error": "Invalid image"}), 400
     
-    # Chuyển sang RGB
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     
-    # Tìm tất cả khuôn mặt
     locs = face_recognition.face_locations(img_rgb, model=DETECTION_MODEL)
     
     if len(locs) == 0:
@@ -177,7 +219,7 @@ def recognize(class_name):
     
     encs = face_recognition.face_encodings(img_rgb, locs)
     
-    # FIX: Chọn khuôn mặt LỚN NHẤT (gần camera nhất)
+    # Chọn mặt lớn nhất
     best_face_idx = 0
     if len(locs) > 1:
         areas = [(loc[2] - loc[0]) * (loc[1] - loc[3]) for loc in locs]
@@ -185,21 +227,20 @@ def recognize(class_name):
     
     enc = encs[best_face_idx]
     
-    # So sánh với database
     matches = face_recognition.compare_faces(data["encodings"], enc, TOLERANCE)
     dist = face_recognition.face_distance(data["encodings"], enc)
     
     recognized_name = "Unknown"
+    
     if len(dist) > 0:
         best = np.argmin(dist)
         if matches[best]:
-            recognized_name = data["names"][best]
-            record_attendance(class_name, recognized_name)
+            student_id = data["names"][best]  # names chứa student_id
+            recognized_name = get_student_name(class_name, student_id)  # Trả về TÊN
+            record_attendance(class_name, student_id)
     
-    # PRINT và RETURN cùng 1 giá trị
     print(f"[{class_name}] Nhận diện: {recognized_name} | {time.time() - start_time:.3f}s")
     
-    # Trả về JSON đúng format
     return jsonify({"name": recognized_name})
 
 @app.route("/class/<class_name>/history")
@@ -208,6 +249,7 @@ def attendance_history(class_name):
     db_path = os.path.join(class_dir, "attendance.db")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    # Chỉ lấy name, date, first_time, status (không lấy student_id)
     cur.execute("SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
     rows = cur.fetchall()
     conn.close()
@@ -217,19 +259,26 @@ def attendance_history(class_name):
 def export_excel_class(class_name):
     db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
     excel_path = f"{class_name}_attendance.xlsx"
+    
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
+    cur.execute("SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
     rows = cur.fetchall()
     conn.close()
+    
     wb = Workbook()
     ws = wb.active
     ws.title = "Điểm danh"
-    ws.append(["Tên học sinh", "Ngày", "Giờ điểm danh", "Trạng thái"])
-    for row in rows: ws.append(row)
+    
+    ws.append(["Mã học sinh", "Tên học sinh", "Ngày", "Giờ điểm danh", "Trạng thái"])
+    
+    for row in rows:
+        ws.append(row)
+    
     for column_cells in ws.columns:
         max_len = max(len(str(cell.value)) for cell in column_cells)
         ws.column_dimensions[column_cells[0].column_letter].width = max_len + 2
+    
     wb.save(excel_path)
     return send_file(excel_path, as_attachment=True)
 
@@ -255,6 +304,7 @@ def reset_attendance_daily():
         if not os.path.exists(BASE_DIR): continue
         
         for class_name in os.listdir(BASE_DIR):
+            if class_name == "DS": continue
             db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
             if os.path.exists(db_path):
                 try:

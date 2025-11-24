@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thêm học sinh - {{ class_name }}</title>
+    <title>Thêm dữ liệu khuôn mặt - {{ class_name }}</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap">
     <style>
         * {
@@ -26,7 +26,7 @@
             padding: clamp(25px, 5vw, 30px);
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            max-width: 500px;
+            max-width: 600px;
             width: 100%;
         }
 
@@ -37,40 +37,92 @@
             font-size: clamp(20px, 4vw, 24px);
         }
 
+        .form-group {
+            margin-bottom: 20px;
+        }
+
         label {
             font-weight: 600;
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             font-size: clamp(13px, 2vw, 14px);
+            color: #333;
         }
 
-        input[type=text],
-        input[type=file] {
+        select,
+        input[type=text] {
             width: 100%;
             padding: clamp(10px, 2vw, 12px);
-            margin-top: 5px;
-            margin-bottom: 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
             font-size: clamp(13px, 2vw, 14px);
             font-family: inherit;
+            transition: border-color 0.3s ease;
         }
 
-        input[type=text]:focus,
-        input[type=file]:focus {
+        select:focus,
+        input[type=text]:focus {
             outline: none;
             border-color: #003366;
         }
 
-        /* Custom file input styling */
+        /* Custom select styling */
+        select {
+            background: white;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+
+        select option {
+            padding: 8px;
+        }
+
+        /* Student info display */
+        .student-info {
+            display: none;
+            padding: 12px;
+            background: #f0f8ff;
+            border-left: 4px solid #003366;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .student-info.show {
+            display: block;
+        }
+
+        .student-info p {
+            margin: 0;
+            font-size: clamp(12px, 1.8vw, 13px);
+            color: #555;
+        }
+
+        .student-info strong {
+            color: #003366;
+        }
+
+        /* File input */
         .file-input-wrapper {
             position: relative;
-            margin-top: 5px;
-            margin-bottom: 15px;
+            margin-top: 8px;
         }
 
         input[type=file] {
+            width: 100%;
+            padding: clamp(10px, 2vw, 12px);
+            border: 2px dashed #ccc;
+            border-radius: 6px;
             cursor: pointer;
+            font-size: clamp(12px, 1.8vw, 13px);
+        }
+
+        input[type=file]:hover {
+            border-color: #003366;
+            background: #f8f9fa;
         }
 
         input[type=file]::file-selector-button {
@@ -82,7 +134,7 @@
             cursor: pointer;
             font-weight: 600;
             margin-right: 10px;
-            font-size: clamp(12px, 1.8vw, 13px);
+            font-size: clamp(11px, 1.6vw, 12px);
         }
 
         input[type=file]::file-selector-button:hover {
@@ -99,18 +151,24 @@
             font-size: clamp(14px, 2.2vw, 16px);
             cursor: pointer;
             font-weight: 600;
-            transition: background 0.3s ease;
+            transition: all 0.3s ease;
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             background: #0056b3;
+            transform: translateY(-1px);
         }
 
-        button:active {
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        button:active:not(:disabled) {
             transform: scale(0.98);
         }
 
-        a {
+        .back-link {
             display: block;
             text-align: center;
             margin-top: 15px;
@@ -120,16 +178,24 @@
             font-size: clamp(13px, 2vw, 14px);
         }
 
-        a:hover {
+        .back-link:hover {
             text-decoration: underline;
         }
 
-        /* Helper text */
         .helper-text {
             font-size: clamp(11px, 1.6vw, 12px);
             color: #666;
-            margin-top: -10px;
-            margin-bottom: 15px;
+            margin-top: 6px;
+        }
+
+        .error-message {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: clamp(12px, 1.8vw, 13px);
+            color: #856404;
         }
 
         /* Mobile optimization */
@@ -146,12 +212,6 @@
                 font-size: 18px;
                 margin-bottom: 15px;
             }
-
-            input[type=text],
-            input[type=file],
-            button {
-                padding: 10px;
-            }
         }
 
         @media (max-width: 360px) {
@@ -167,27 +227,76 @@
 </head>
 <body>
 <div class="container">
-    <h2>Thêm học sinh mới - {{ class_name }}</h2>
-    <form method="POST" enctype="multipart/form-data">
-        <label for="name">Tên học sinh:</label>
-        <input type="text" id="name" name="name" placeholder="Nhập họ và tên đầy đủ" required>
-        
-        <label for="images">Ảnh khuôn mặt:</label>
-        <div class="file-input-wrapper">
-            <input type="file" id="images" name="images" multiple accept="image/*" required>
+    <h2>Thêm dữ liệu khuôn mặt - {{ class_name }}</h2>
+    
+    {% if students|length == 0 %}
+    <div class="error-message">
+        ⚠️ Chưa có danh sách học sinh. Vui lòng thêm file DS_{{ class_name }}.xlsx vào thư mục classes/DS/
+    </div>
+    {% else %}
+    
+    <form method="POST" enctype="multipart/form-data" id="addStudentForm">
+        <div class="form-group">
+            <label for="student_select">👤 Chọn học sinh:</label>
+            <select id="student_select" name="student_id" required>
+                <option value="">-- Chọn học sinh --</option>
+                {% for student in students %}
+                <option value="{{ student.id }}" data-name="{{ student.name }}">
+                    {{ student.id }} - {{ student.name }}
+                </option>
+                {% endfor %}
+            </select>
+            
+            <div id="studentInfo" class="student-info">
+                <p><strong>Mã:</strong> <span id="displayId"></span></p>
+                <p><strong>Tên:</strong> <span id="displayName"></span></p>
+            </div>
         </div>
-        <p class="helper-text">💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác</p>
         
-        <button type="submit">✓ Tải lên</button>
+        <div class="form-group">
+            <label for="images">📸 Ảnh khuôn mặt:</label>
+            <div class="file-input-wrapper">
+                <input type="file" id="images" name="images" multiple accept="image/*" required>
+            </div>
+            <p class="helper-text" id="helperText">💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác</p>
+        </div>
+        
+        <button type="submit" id="submitBtn">✓ Tải lên và Mã hóa</button>
     </form>
-    <a href="{{ url_for('class_home', class_name=class_name) }}">← Quay lại</a>
+    
+    <a href="{{ url_for('class_home', class_name=class_name) }}" class="back-link">← Quay lại</a>
+    
+    {% endif %}
 </div>
 
 <script>
-    // Show selected file count
+    const studentSelect = document.getElementById('student_select');
+    const studentInfo = document.getElementById('studentInfo');
+    const displayId = document.getElementById('displayId');
+    const displayName = document.getElementById('displayName');
     const fileInput = document.getElementById('images');
-    const helperText = document.querySelector('.helper-text');
+    const helperText = document.getElementById('helperText');
+    const submitBtn = document.getElementById('submitBtn');
     
+    // Show student info when selected
+    studentSelect.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        
+        if (this.value) {
+            const studentId = this.value;
+            const studentName = selectedOption.dataset.name;
+            
+            displayId.textContent = studentId;
+            displayName.textContent = studentName;
+            studentInfo.classList.add('show');
+        } else {
+            studentInfo.classList.remove('show');
+        }
+        
+        checkFormValidity();
+    });
+    
+    // Show selected file count
     fileInput.addEventListener('change', function() {
         const fileCount = this.files.length;
         if (fileCount > 0) {
@@ -197,7 +306,18 @@
             helperText.textContent = '💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác';
             helperText.style.color = '#666';
         }
+        
+        checkFormValidity();
     });
+    
+    function checkFormValidity() {
+        const hasStudent = studentSelect.value !== '';
+        const hasFiles = fileInput.files.length > 0;
+        submitBtn.disabled = !(hasStudent && hasFiles);
+    }
+    
+    // Initial check
+    checkFormValidity();
 </script>
 </body>
 </html>
