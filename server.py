@@ -1,16 +1,52 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file
 from encode_known_faces import build_encodings_for_class
-from student_utils import load_student_list, get_student_name, create_default_student_list
-from openpyxl import Workbook
+from typing import Dict
+from openpyxl import load_workbook, Workbook
 import os, sqlite3, pickle, cv2, numpy as np, face_recognition
 import datetime, threading, time
 
+DS_DIR = "classes/DS"
 BASE_DIR = "classes"
 TOLERANCE, DETECTION_MODEL = 0.4, "hog"
 
 app = Flask(__name__)
 LOCKS = {}
 ENCODINGS_CACHE = {} 
+
+def load_student_list(class_name: str) -> Dict[str, str]:
+    """
+    Load danh sách học sinh từ file Excel
+    Returns: {student_id: student_name}
+    """
+    file_path = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
+    
+    if not os.path.exists(file_path):
+        return {}
+    
+    try:
+        wb = load_workbook(file_path, read_only=True)
+        ws = wb.active
+        
+        students = {}
+        # Đọc từ dòng 2 (bỏ qua header)
+        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+            student_id = row[0]  # Cột A
+            student_name = row[1]  # Cột B
+            
+            if student_id and student_name:
+                students[str(student_id).strip()] = str(student_name).strip()
+        
+        wb.close()
+        return students
+        
+    except Exception as e:
+        print(f"❌ Lỗi đọc file {file_path}: {e}")
+        return {}
+
+def get_student_name(class_name: str, student_id: str) -> str:
+    """Lấy tên học sinh từ mã học sinh"""
+    students = load_student_list(class_name)
+    return students.get(str(student_id), "Unknown")
 
 def sort_by_vietnamese_name(names):
     def name_key(fullname):
@@ -28,9 +64,6 @@ def get_status_by_time(now):
 def ensure_class(class_name):
     class_dir = os.path.join(BASE_DIR, class_name)
     os.makedirs(os.path.join(class_dir, "known_faces"), exist_ok=True)
-    
-    # Tạo file DS mẫu
-    create_default_student_list(class_name)
     
     # Database với cột student_id
     db_path = os.path.join(class_dir, "attendance.db")
@@ -319,4 +352,4 @@ def reset_attendance_daily():
 
 if __name__ == "__main__":
     threading.Thread(target=reset_attendance_daily, daemon=True).start()
-    app.run(host="192.168.1.173", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
