@@ -2,45 +2,202 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Thêm học sinh - {{ class_name }}</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap">
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: 'Segoe UI', sans-serif;
             background: #f4f7f9;
-            display: flex; justify-content: center; align-items: center;
-            min-height: 100vh; margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: clamp(15px, 3vw, 20px);
         }
+
         .container {
-            background: #fff; padding: 30px; border-radius: 10px;
+            background: #fff;
+            padding: clamp(25px, 5vw, 30px);
+            border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            max-width: 500px; width: 100%;
+            max-width: 500px;
+            width: 100%;
         }
-        h2 { color: #003366; text-align: center; margin-bottom: 20px; }
-        label { font-weight: 600; }
-        input[type=text], input[type=file] {
-            width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 15px;
-            border: 1px solid #ccc; border-radius: 5px;
+
+        h2 {
+            color: #003366;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: clamp(20px, 4vw, 24px);
         }
+
+        label {
+            font-weight: 600;
+            display: block;
+            margin-bottom: 6px;
+            font-size: clamp(13px, 2vw, 14px);
+        }
+
+        input[type=text],
+        input[type=file] {
+            width: 100%;
+            padding: clamp(10px, 2vw, 12px);
+            margin-top: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: clamp(13px, 2vw, 14px);
+            font-family: inherit;
+        }
+
+        input[type=text]:focus,
+        input[type=file]:focus {
+            outline: none;
+            border-color: #003366;
+        }
+
+        /* Custom file input styling */
+        .file-input-wrapper {
+            position: relative;
+            margin-top: 5px;
+            margin-bottom: 15px;
+        }
+
+        input[type=file] {
+            cursor: pointer;
+        }
+
+        input[type=file]::file-selector-button {
+            padding: 8px 16px;
+            background: #003366;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-right: 10px;
+            font-size: clamp(12px, 1.8vw, 13px);
+        }
+
+        input[type=file]::file-selector-button:hover {
+            background: #0056b3;
+        }
+
         button {
-            width: 100%; padding: 12px; background: #003366; color: white;
-            border: none; border-radius: 6px; font-size: 16px; cursor: pointer;
+            width: 100%;
+            padding: clamp(12px, 2.5vw, 14px);
+            background: #003366;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: clamp(14px, 2.2vw, 16px);
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s ease;
         }
-        button:hover { background: #0056b3; }
-        a { display: block; text-align: center; margin-top: 15px; color: #004085; text-decoration: none; }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        a {
+            display: block;
+            text-align: center;
+            margin-top: 15px;
+            color: #004085;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: clamp(13px, 2vw, 14px);
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* Helper text */
+        .helper-text {
+            font-size: clamp(11px, 1.6vw, 12px);
+            color: #666;
+            margin-top: -10px;
+            margin-bottom: 15px;
+        }
+
+        /* Mobile optimization */
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 20px;
+            }
+
+            h2 {
+                font-size: 18px;
+                margin-bottom: 15px;
+            }
+
+            input[type=text],
+            input[type=file],
+            button {
+                padding: 10px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .container {
+                padding: 15px;
+            }
+
+            h2 {
+                font-size: 16px;
+            }
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <h2>Thêm học sinh mới - {{ class_name }}</h2>
     <form method="POST" enctype="multipart/form-data">
-        <label>Tên học sinh:</label>
-        <input type="text" name="name" required>
-        <label>Ảnh khuôn mặt:</label>
-        <input type="file" name="images" multiple required>
-        <button type="submit">Tải lên</button>
+        <label for="name">Tên học sinh:</label>
+        <input type="text" id="name" name="name" placeholder="Nhập họ và tên đầy đủ" required>
+        
+        <label for="images">Ảnh khuôn mặt:</label>
+        <div class="file-input-wrapper">
+            <input type="file" id="images" name="images" multiple accept="image/*" required>
+        </div>
+        <p class="helper-text">💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác</p>
+        
+        <button type="submit">✓ Tải lên</button>
     </form>
     <a href="{{ url_for('class_home', class_name=class_name) }}">← Quay lại</a>
 </div>
+
+<script>
+    // Show selected file count
+    const fileInput = document.getElementById('images');
+    const helperText = document.querySelector('.helper-text');
+    
+    fileInput.addEventListener('change', function() {
+        const fileCount = this.files.length;
+        if (fileCount > 0) {
+            helperText.textContent = `✓ Đã chọn ${fileCount} ảnh`;
+            helperText.style.color = '#28a745';
+        } else {
+            helperText.textContent = '💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác';
+            helperText.style.color = '#666';
+        }
+    });
+</script>
 </body>
 </html>

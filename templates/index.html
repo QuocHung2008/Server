@@ -6,26 +6,29 @@
     <title>Bảng tổng điểm danh</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap">
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: 'Segoe UI', sans-serif;
             background-color: #f4f7f9;
             color: #333;
             margin: 0; 
-            padding: 40px;
+            padding: clamp(20px, 5vw, 40px);
             display: flex; 
             justify-content: center; 
             align-items: center;
             min-height: 100vh;
-            text-align: center; /* ✅ căn giữa toàn trang */
         }
 
         .container {
             background: #fff; 
-            padding: 30px; 
+            padding: clamp(20px, 4vw, 30px); 
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             width: 100%; 
-            max-width: 900px;
+            max-width: 1200px;
         }
 
         h1 {
@@ -33,43 +36,62 @@
             border-bottom: 2px solid #003366;
             padding-bottom: 10px;
             margin-bottom: 20px;
+            font-size: clamp(24px, 5vw, 32px);
+            text-align: center;
+        }
+
+        /* Responsive table wrapper */
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-top: 10px;
         }
 
         table {
             width: 100%; 
             border-collapse: collapse;
-            margin-top: 10px; 
             border-radius: 8px;
             overflow: hidden;
+            min-width: 600px; /* Minimum width để table không bị vỡ */
         }
 
         th, td {
-            padding: 12px; 
+            padding: clamp(8px, 2vw, 12px); 
             border-bottom: 1px solid #ddd;
-            text-align: center;       /* ✅ căn giữa chữ & số */
-            vertical-align: middle;   /* ✅ căn giữa theo chiều dọc */
-            word-wrap: break-word;    
-            white-space: normal;      
+            text-align: center;
+            vertical-align: middle;
+            word-wrap: break-word;
         }
 
         th {
             background-color: #004085; 
             color: white;
+            font-weight: 600;
+            font-size: clamp(13px, 2vw, 16px);
+        }
+
+        td {
+            font-size: clamp(12px, 1.8vw, 14px);
         }
 
         tr:nth-child(even) { 
             background-color: #f9f9f9; 
         }
 
-        /* ✅ Cột “Danh sách vắng” riêng biệt */
+        tr:hover {
+            background-color: #f0f0f0;
+        }
+
+        /* Cột danh sách vắng */
         td.absent-list {
-            text-align: left;           /* căn lề trái */
-            max-width: 280px;
+            text-align: left;
+            max-width: 300px;
         }
 
         td.absent-list ol {
             margin: 0;
-            padding-left: 20px;         /* khoảng cách để số thứ tự đẹp hơn */
+            padding-left: 20px;
+            font-size: clamp(11px, 1.6vw, 13px);
         }
 
         td.absent-list li {
@@ -77,6 +99,7 @@
             line-height: 1.4em;
         }
 
+        /* Link styling */
         a {
             text-decoration: none; 
             color: #003366; 
@@ -87,53 +110,139 @@
             text-decoration: underline; 
         }
 
+        /* Button styling */
         .btn {
             display: inline-block;
-            padding: 8px 16px;
-            margin-top: 10px;
+            padding: clamp(6px, 1.5vw, 8px) clamp(12px, 3vw, 16px);
             border-radius: 6px;
             text-decoration: none;
             font-weight: 600;
             background-color: #003366;
             color: #fff;
+            font-size: clamp(12px, 1.6vw, 14px);
+            white-space: nowrap;
+            transition: opacity 0.3s ease;
         }
 
         .btn:hover { 
-            opacity: 0.9; 
+            opacity: 0.85;
+            text-decoration: none;
+        }
+
+        /* Mobile optimization */
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            /* Stack columns on mobile if needed */
+            td.absent-list {
+                max-width: none;
+            }
+
+            td.absent-list ol {
+                padding-left: 15px;
+            }
+
+            /* Make buttons stack vertically */
+            td:last-child {
+                display: flex;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 15px;
+            }
+
+            h1 {
+                font-size: 20px;
+                padding-bottom: 8px;
+            }
+
+            th, td {
+                padding: 8px 4px;
+            }
+
+            /* Smaller font on very small screens */
+            table {
+                min-width: 500px;
+            }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+
+        .empty-state p {
+            margin-top: 10px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
 <div class="container">
     <h1>📊 Bảng tổng điểm danh</h1>
-    <table>
-        <tr>
-            <th>Tên lớp</th>
-            <th>Số lượng có mặt</th>
-            <th>Số lượng vắng</th>
-            <th>Danh sách vắng</th>
-            <th>Tải CSV</th>
-        </tr>
-        {% for cls in classes %}
-        <tr>
-            <td><a href="/class/{{ cls.class }}/">{{ cls.class }}</a></td>
-            <td style="color: green;">{{ cls.present }}</td>
-            <td style="color: red;">{{ cls.absent }}</td>
-            <td class="absent-list">
-                {% if cls.absent_names %}
-                    <ol>
-                        {% for n in cls.absent_names.split(", ") %}
-                            <li>{{ n }}</li>
-                        {% endfor %}
-                    </ol>
-                {% else %}
-                    <em>Không có</em>
-                {% endif %}
-            </td>
-            <td><a class="btn" href="/class/{{ cls.class }}/export_excel">Excel</a></td>
-        </tr>
-        {% endfor %}
-    </table>
+    
+    {% if classes %}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Tên lớp</th>
+                    <th>Có mặt</th>
+                    <th>Vắng</th>
+                    <th>Danh sách vắng</th>
+                    <th>Tải Excel</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cls in classes %}
+                <tr>
+                    <td><a href="/class/{{ cls.class }}/">{{ cls.class }}</a></td>
+                    <td style="color: green; font-weight: 600;">{{ cls.present }}</td>
+                    <td style="color: red; font-weight: 600;">{{ cls.absent }}</td>
+                    <td class="absent-list">
+                        {% if cls.absent_names %}
+                            <ol>
+                                {% for n in cls.absent_names.split(", ") %}
+                                    <li>{{ n }}</li>
+                                {% endfor %}
+                            </ol>
+                        {% else %}
+                            <em style="color: #999;">Không có</em>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a class="btn" href="/class/{{ cls.class }}/export_excel">📥 Excel</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>📭 Chưa có lớp học nào</h3>
+        <p>Hãy thêm lớp học đầu tiên của bạn</p>
+    </div>
+    {% endif %}
 </div>
 </body>
 </html>

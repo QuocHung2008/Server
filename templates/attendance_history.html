@@ -1,84 +1,253 @@
 <!DOCTYPE html>
 <html lang="vi">
-  <head>
+<head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lịch sử điểm danh - {{ class_name }}</title>
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap"
-    />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap" />
     <style>
-      body {
-        font-family: "Segoe UI", sans-serif;
-        background: #f4f7f9;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-        margin: 0;
-      }
-      .container {
-        background: #fff;
-        padding: 30px;
-        border-radius: 10px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        max-width: 600px;
-        width: 100%;
-      }
-      h2 {
-        text-align: center;
-        color: #003366;
-      }
-      table {
-        width: 100%;
-        overflow: hidden;
-        border-collapse: collapse;
-		border-radius: 10px;
-        margin-top: 15px;
-		box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-      }
-      th,
-      td {
-        padding: 10px;
-        border-bottom: 1px solid #ccc;
-        text-align: left;
-      }
-      th {
-        background: #004085;
-        color: white;
-      }
-      a {
-		padding: 12px;
-        display: block;
-        margin-top: 15px;
-        text-align: center;
-        color: #004085;
-        text-decoration: none;
-      }
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Segoe UI", sans-serif;
+            background: #f4f7f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: clamp(15px, 3vw, 20px);
+        }
+
+        .container {
+            background: #fff;
+            padding: clamp(25px, 5vw, 30px);
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h2 {
+            text-align: center;
+            color: #003366;
+            margin-bottom: 20px;
+            font-size: clamp(20px, 4vw, 26px);
+        }
+
+        /* Table wrapper for scroll */
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-top: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            overflow: hidden;
+            min-width: 500px;
+        }
+
+        th, td {
+            padding: clamp(8px, 2vw, 10px);
+            border-bottom: 1px solid #ccc;
+            text-align: left;
+        }
+
+        th {
+            background: #004085;
+            color: white;
+            font-weight: 600;
+            font-size: clamp(12px, 2vw, 14px);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        th:first-child {
+            border-top-left-radius: 10px;
+        }
+
+        th:last-child {
+            border-top-right-radius: 10px;
+        }
+
+        td {
+            font-size: clamp(11px, 1.8vw, 13px);
+            color: #333;
+        }
+
+        tbody tr {
+            background: white;
+        }
+
+        tbody tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        tbody tr:hover {
+            background: #f0f0f0;
+        }
+
+        /* Back button */
+        .back-link {
+            display: block;
+            padding: clamp(10px, 2vw, 12px);
+            margin-top: 15px;
+            text-align: center;
+            color: #004085;
+            text-decoration: none;
+            font-weight: 600;
+            background: #f8f9fa;
+            border-radius: 6px;
+            transition: background 0.3s ease;
+            font-size: clamp(13px, 2vw, 14px);
+        }
+
+        .back-link:hover {
+            background: #e9ecef;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+
+        .empty-state h3 {
+            font-size: clamp(16px, 3vw, 18px);
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            font-size: clamp(12px, 2vw, 14px);
+        }
+
+        /* Status badges for better visibility */
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: clamp(10px, 1.6vw, 12px);
+            display: inline-block;
+        }
+
+        .status-present {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-absent {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-late {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Mobile optimization */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 20px;
+            }
+
+            h2 {
+                font-size: 18px;
+            }
+
+            table {
+                min-width: 450px;
+            }
+
+            th, td {
+                padding: 8px 6px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 15px;
+            }
+
+            h2 {
+                font-size: 16px;
+                margin-bottom: 15px;
+            }
+
+            table {
+                min-width: 400px;
+                font-size: 11px;
+            }
+
+            th, td {
+                padding: 6px 4px;
+            }
+
+            .back-link {
+                padding: 10px;
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            table {
+                min-width: 350px;
+            }
+        }
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <div class="container">
-      <h2>Lịch sử điểm danh - {{ class_name }}</h2>
-      <table>
-        <tr>
-          <th>Tên</th>
-          <th>Ngày</th>
-          <th>Giờ</th>
-        </tr>
+        <h2>Lịch sử điểm danh - {{ class_name }}</h2>
 
-        {% for name, date, first_time, status in records %}
-        <tr>
-          <td>{{ name }}</td>
-          <td>{{ date }}</td>
-          <td>{{ first_time }}</td>
-        </tr>
-        {% endfor %}
-      </table>
+        {% if records %}
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tên</th>
+                        <th>Ngày</th>
+                        <th>Giờ</th>
+                        <th>Trạng thái</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for name, date, first_time, status in records %}
+                    <tr>
+                        <td><strong>{{ name }}</strong></td>
+                        <td>{{ date }}</td>
+                        <td>{{ first_time }}</td>
+                        <td>
+                            <span class="status-badge {% if status == 'Có mặt' %}status-present{% elif status == 'Vắng' %}status-absent{% else %}status-late{% endif %}">
+                                {{ status }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>📭 Chưa có dữ liệu</h3>
+            <p>Lịch sử điểm danh sẽ hiển thị tại đây</p>
+        </div>
+        {% endif %}
 
-      <a href="{{ url_for('class_home', class_name=class_name) }}"
-        >← Quay lại</a
-      >
+        <a href="{{ url_for('class_home', class_name=class_name) }}" class="back-link">← Quay lại</a>
     </div>
-  </body>
+</body>
 </html>
