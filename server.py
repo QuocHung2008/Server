@@ -352,4 +352,4 @@ def reset_attendance_daily():
 
 if __name__ == "__main__":
     threading.Thread(target=reset_attendance_daily, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="172.20.10.14", port=5000, debug=False, threaded=True)

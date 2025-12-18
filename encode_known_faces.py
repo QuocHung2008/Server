@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
+
 import os, hashlib, pickle, json, cv2, numpy as np
 from typing import Dict, List
 import face_recognition
