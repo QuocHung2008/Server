@@ -59,4 +59,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import os,requests; requests.get(f'http://localhost:{os.environ.get(\"PORT\",10000)}/health', timeout=5)" || exit 1
 
 # Production server
-CMD ["sh", "-c", "gunicorn server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"]
+CMD ["sh", "-c", "python init_databases.py && gunicorn server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --preload"]

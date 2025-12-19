@@ -10,6 +10,7 @@ import paho.mqtt.client as mqtt
 import base64
 import signal
 import sys
+import uuid
 
 DS_DIR = "classes/DS"
 BASE_DIR = "classes"
@@ -24,28 +25,20 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Vui lòng đăng nhập để truy cập.'
 
-# MQTT Configuration (từ environment variables cho Render)
-MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')  # ✅ ĐÃ SỬA
+# MQTT Configuration
+MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
 
 # API Key cho ESP32
-VALID_API_KEYS = {}  # {api_key: {class_name, device_name, created_at}}
+VALID_API_KEYS = {}
 
 LOCKS = {}
 ENCODINGS_CACHE = {}
 image_buffer = {}
 
-def signal_handler(sig, frame):
-    print('\n🛑 Shutting down gracefully...')
-    mqtt_client.disconnect()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 # ============================================================
-# USER MODEL & DATABASE
+# USER MODEL
 # ============================================================
 class User(UserMixin):
     def __init__(self, id, username, password_hash, role='user'):
@@ -54,77 +47,46 @@ class User(UserMixin):
         self.password_hash = password_hash
         self.role = role
 
-def init_user_db():
-    """Khởi tạo database users"""
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT DEFAULT 'user',
-        created_at TEXT
-    )''')
-    
-    # Tạo admin mặc định nếu chưa có
-    c.execute("SELECT * FROM users WHERE username='admin'")
-    if not c.fetchone():
-        admin_hash = generate_password_hash('admin123')
-        c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                 ('admin', admin_hash, 'admin', datetime.datetime.now().isoformat()))
-    
-    conn.commit()
-    conn.close()
-
-def init_api_keys_db():
-    """Khởi tạo database API keys"""
-    conn = sqlite3.connect('api_keys.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS api_keys (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        api_key TEXT UNIQUE NOT NULL,
-        class_name TEXT NOT NULL,
-        device_name TEXT,
-        created_at TEXT,
-        is_active INTEGER DEFAULT 1
-    )''')
-    conn.commit()
-    conn.close()
-
 @login_manager.user_loader
 def load_user(user_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return User(row[0], row[1], row[2], row[3])
+    try:
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE id=?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return User(row[0], row[1], row[2], row[3])
+    except Exception as e:
+        print(f"❌ Error loading user: {e}")
     return None
 
 # ============================================================
 # API KEY MANAGEMENT
 # ============================================================
 def generate_api_key():
-    """Tạo API key ngẫu nhiên"""
     return 'esp32_' + secrets.token_urlsafe(32)
 
 def load_api_keys():
     """Load API keys từ database vào memory"""
     global VALID_API_KEYS
-    conn = sqlite3.connect('api_keys.db')
-    c = conn.cursor()
-    c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
-    for row in c.fetchall():
-        VALID_API_KEYS[row[0]] = {
-            'class_name': row[1],
-            'device_name': row[2],
-            'created_at': row[3]
-        }
-    conn.close()
+    try:
+        conn = sqlite3.connect('api_keys.db')
+        c = conn.cursor()
+        c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
+        VALID_API_KEYS = {}
+        for row in c.fetchall():
+            VALID_API_KEYS[row[0]] = {
+                'class_name': row[1],
+                'device_name': row[2],
+                'created_at': row[3]
+            }
+        conn.close()
+        print(f"✅ Loaded {len(VALID_API_KEYS)} API keys")
+    except Exception as e:
+        print(f"❌ Error loading API keys: {e}")
 
 def verify_api_key(api_key, class_name):
-    """Xác thực API key"""
     if api_key in VALID_API_KEYS:
         if VALID_API_KEYS[api_key]['class_name'] == class_name:
             return True
@@ -142,19 +104,24 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE username=?", (username,))
-        row = c.fetchone()
-        conn.close()
-        
-        if row and check_password_hash(row[2], password):
-            user = User(row[0], row[1], row[2], row[3])
-            login_user(user)
-            next_page = request.args.get('next')
-            return redirect(next_page if next_page else url_for('index'))
-        else:
-            flash('Tên đăng nhập hoặc mật khẩu không đúng', 'error')
+        try:
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute("SELECT * FROM users WHERE username=?", (username,))
+            row = c.fetchone()
+            conn.close()
+            
+            if row and check_password_hash(row[2], password):
+                user = User(row[0], row[1], row[2], row[3])
+                login_user(user)
+                print(f"✅ User logged in: {username}")
+                next_page = request.args.get('next')
+                return redirect(next_page if next_page else url_for('index'))
+            else:
+                flash('Tên đăng nhập hoặc mật khẩu không đúng', 'error')
+        except Exception as e:
+            print(f"❌ Login error: {e}")
+            flash('Lỗi hệ thống, vui lòng thử lại', 'error')
     
     return render_template('login.html')
 
@@ -180,29 +147,38 @@ def change_password():
         elif len(new_password) < 6:
             flash('Mật khẩu phải có ít nhất 6 ký tự', 'error')
         else:
-            conn = sqlite3.connect('users.db')
-            c = conn.cursor()
-            new_hash = generate_password_hash(new_password)
-            c.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
-            conn.commit()
-            conn.close()
-            flash('Đổi mật khẩu thành công', 'success')
-            return redirect(url_for('index'))
+            try:
+                conn = sqlite3.connect('users.db')
+                c = conn.cursor()
+                new_hash = generate_password_hash(new_password)
+                c.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
+                conn.commit()
+                conn.close()
+                flash('Đổi mật khẩu thành công', 'success')
+                return redirect(url_for('index'))
+            except Exception as e:
+                print(f"❌ Password change error: {e}")
+                flash('Lỗi đổi mật khẩu', 'error')
     
     return render_template('change_password.html')
 
 # ============================================================
-# API KEY MANAGEMENT ROUTES
+# API KEY ROUTES
 # ============================================================
 @app.route('/api_keys')
 @login_required
 def manage_api_keys():
-    conn = sqlite3.connect('api_keys.db')
-    c = conn.cursor()
-    c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
-    keys = c.fetchall()
-    conn.close()
-    return render_template('api_keys.html', keys=keys)
+    try:
+        conn = sqlite3.connect('api_keys.db')
+        c = conn.cursor()
+        c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
+        keys = c.fetchall()
+        conn.close()
+        return render_template('api_keys.html', keys=keys)
+    except Exception as e:
+        print(f"❌ Error loading API keys: {e}")
+        flash('Lỗi tải API keys', 'error')
+        return render_template('api_keys.html', keys=[])
 
 @app.route('/api_keys/create', methods=['POST'])
 @login_required
@@ -214,38 +190,48 @@ def create_api_key():
         flash('Vui lòng chọn lớp', 'error')
         return redirect(url_for('manage_api_keys'))
     
-    api_key = generate_api_key()
+    try:
+        api_key = generate_api_key()
+        conn = sqlite3.connect('api_keys.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
+                 (api_key, class_name, device_name, datetime.datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        
+        load_api_keys()
+        flash(f'Tạo API key thành công: {api_key}', 'success')
+    except Exception as e:
+        print(f"❌ Error creating API key: {e}")
+        flash('Lỗi tạo API key', 'error')
     
-    conn = sqlite3.connect('api_keys.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
-             (api_key, class_name, device_name, datetime.datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-    
-    load_api_keys()
-    flash(f'Tạo API key thành công: {api_key}', 'success')
     return redirect(url_for('manage_api_keys'))
 
 @app.route('/api_keys/delete/<int:key_id>', methods=['POST'])
 @login_required
 def delete_api_key(key_id):
-    conn = sqlite3.connect('api_keys.db')
-    c = conn.cursor()
-    c.execute("UPDATE api_keys SET is_active=0 WHERE id=?", (key_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('api_keys.db')
+        c = conn.cursor()
+        c.execute("UPDATE api_keys SET is_active=0 WHERE id=?", (key_id,))
+        conn.commit()
+        conn.close()
+        
+        load_api_keys()
+        flash('Đã vô hiệu hóa API key', 'success')
+    except Exception as e:
+        print(f"❌ Error deleting API key: {e}")
+        flash('Lỗi xóa API key', 'error')
     
-    load_api_keys()
-    flash('Đã vô hiệu hóa API key', 'success')
     return redirect(url_for('manage_api_keys'))
 
 @app.route("/health")
 def health():
-    return "OK", 200
+    """Health check endpoint for Railway/Docker"""
+    return jsonify({"status": "healthy"}), 200
 
 # ============================================================
-# HELPER FUNCTIONS (giữ nguyên)
+# HELPER FUNCTIONS
 # ============================================================
 def load_student_list(class_name: str) -> Dict[str, str]:
     file_path = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
@@ -256,25 +242,17 @@ def load_student_list(class_name: str) -> Dict[str, str]:
         ws = wb.active
         students = {}
         for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
-            student_id = row[0]
-            student_name = row[1]
-            if student_id and student_name:
-                students[str(student_id).strip()] = str(student_name).strip()
+            if row[0] and row[1]:
+                students[str(row[0]).strip()] = str(row[1]).strip()
         wb.close()
         return students
     except Exception as e:
-        print(f"❌ Lỗi đọc file {file_path}: {e}")
+        print(f"❌ Error reading {file_path}: {e}")
         return {}
 
 def get_student_name(class_name: str, student_id: str) -> str:
     students = load_student_list(class_name)
     return students.get(str(student_id), "Unknown")
-
-def sort_by_vietnamese_name(names):
-    def name_key(fullname):
-        parts = fullname.strip().split()
-        return parts[::-1]
-    return sorted(names, key=name_key)
 
 def get_status_by_time(now):
     morning_limit = now.replace(hour=6, minute=45, second=0, microsecond=0)
@@ -347,12 +325,12 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
     data = get_encodings_data(class_name)
     img_bgr = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
     if img_bgr is None:
-        print(f"[{class_name}] ❌ Ảnh không hợp lệ")
+        print(f"[{class_name}] ❌ Invalid image")
         return "Unknown"
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     locs = face_recognition.face_locations(img_rgb, model=DETECTION_MODEL)
     if len(locs) == 0:
-        print(f"[{class_name}] ❌ Không phát hiện mặt | {time.time() - start_time:.3f}s")
+        print(f"[{class_name}] ❌ No face detected | {time.time() - start_time:.3f}s")
         return "Unknown"
     encs = face_recognition.face_encodings(img_rgb, locs)
     best_face_idx = 0
@@ -374,15 +352,15 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
     return recognized_name
 
 # ============================================================
-# MQTT CALLBACKS với API Key validation
+# MQTT CALLBACKS
 # ============================================================
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("✅ Đã kết nối MQTT Broker")
+        print("✅ Connected to MQTT Broker")
         client.subscribe("esp32cam/+/image/#")
         print("📡 Subscribed: esp32cam/+/image/#")
     else:
-        print(f"❌ Kết nối MQTT thất bại, rc={rc}")
+        print(f"❌ MQTT connection failed, rc={rc}")
 
 def on_message(client, userdata, msg):
     topic = msg.topic
@@ -399,12 +377,10 @@ def on_message(client, userdata, msg):
     if message_type == "meta":
         try:
             meta = json.loads(payload.decode())
-            
-            # ✅ XÁC THỰC API KEY
             api_key = meta.get('api_key')
+            
             if not api_key or not verify_api_key(api_key, meta.get('class', class_name)):
-                print(f"[{class_name}] ❌ API Key không hợp lệ")
-                # Gửi error về ESP32
+                print(f"[{class_name}] ❌ Invalid API Key")
                 client.publish(f"esp32cam/{class_name}/result", 
                              json.dumps({"name": "Unauthorized", "error": "Invalid API key"}))
                 return
@@ -412,27 +388,24 @@ def on_message(client, userdata, msg):
             image_buffer[class_name]["meta"] = meta
             image_buffer[class_name]["api_key"] = api_key
             image_buffer[class_name]["chunks"] = {}
-            print(f"[{class_name}] 📥 Nhận meta: {meta['chunks']} chunks, {meta['size']} bytes [API Key OK]")
+            print(f"[{class_name}] 📥 Meta received: {meta['chunks']} chunks")
         except Exception as e:
-            print(f"[{class_name}] ❌ Lỗi parse meta: {e}")
+            print(f"[{class_name}] ❌ Error parsing meta: {e}")
     
     elif message_type == "chunk":
-        # Kiểm tra đã có API key chưa
         if not image_buffer[class_name].get("api_key"):
-            print(f"[{class_name}] ❌ Chunk nhận trước meta")
+            print(f"[{class_name}] ❌ Chunk received before meta")
             return
         
         chunk_id = int(parts[4])
         image_buffer[class_name]["chunks"][chunk_id] = payload.decode()
-        print(f"[{class_name}] 📦 Chunk {chunk_id}/{image_buffer[class_name]['meta'].get('chunks', '?')}")
     
     elif message_type == "done":
-        # Kiểm tra API key
         if not image_buffer[class_name].get("api_key"):
-            print(f"[{class_name}] ❌ Done nhận nhưng chưa có API key")
+            print(f"[{class_name}] ❌ Done received but no API key")
             return
         
-        print(f"[{class_name}] ⚙️ Bắt đầu xử lý...")
+        print(f"[{class_name}] ⚙️ Processing...")
         try:
             chunks_dict = image_buffer[class_name]["chunks"]
             sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
@@ -442,17 +415,16 @@ def on_message(client, userdata, msg):
             result_topic = f"esp32cam/{class_name}/result"
             result_json = json.dumps({"name": recognized_name})
             client.publish(result_topic, result_json)
-            print(f"[{class_name}] 📤 Đã gửi kết quả: {recognized_name}")
+            print(f"[{class_name}] 📤 Result sent: {recognized_name}")
             del image_buffer[class_name]
         except Exception as e:
-            print(f"[{class_name}] ❌ Lỗi xử lý: {e}")
-            result_topic = f"esp32cam/{class_name}/result"
-            client.publish(result_topic, json.dumps({"name": "Unknown", "error": str(e)}))
+            print(f"[{class_name}] ❌ Processing error: {e}")
+            client.publish(f"esp32cam/{class_name}/result", 
+                         json.dumps({"name": "Unknown", "error": str(e)}))
             if class_name in image_buffer:
                 del image_buffer[class_name]
 
-import uuid
-mqtt_client = mqtt.Client(client_id=f"render-server-{uuid.uuid4().hex[:8]}")
+mqtt_client = mqtt.Client(client_id=f"railway-{uuid.uuid4().hex[:8]}")
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
@@ -461,44 +433,48 @@ def start_mqtt():
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
         mqtt_client.loop_forever()
     except Exception as e:
-        print(f"❌ Lỗi MQTT: {e}")
+        print(f"❌ MQTT error: {e}")
         time.sleep(5)
         start_mqtt()
 
 # ============================================================
-# WEB ROUTES (với @login_required)
+# WEB ROUTES
 # ============================================================
 @app.route("/")
 @login_required
 def index():
-    data = []
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    if not os.path.exists(BASE_DIR): 
-        os.makedirs(BASE_DIR)
-    for class_name in os.listdir(BASE_DIR):
-        class_dir = os.path.join(BASE_DIR, class_name)
-        if not os.path.isdir(class_dir) or class_name == "DS": 
-            continue
-        db_path = os.path.join(class_dir, "attendance.db")
-        if not os.path.exists(db_path): 
-            continue
-        students = load_student_list(class_name)
-        if not students: 
-            continue
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
-        present_ids = {r[0] for r in c.fetchall()}
-        conn.close()
-        absent_ids = [sid for sid in students.keys() if sid not in present_ids]
-        absent_names = [students[sid] for sid in absent_ids]
-        data.append({
-            "class": class_name,
-            "present": len(present_ids),
-            "absent": len(absent_ids),
-            "absent_names": ", ".join(absent_names)
-        })
-    return render_template('index.html', classes=data, user=current_user)
+    try:
+        data = []
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        if not os.path.exists(BASE_DIR): 
+            os.makedirs(BASE_DIR)
+        for class_name in os.listdir(BASE_DIR):
+            class_dir = os.path.join(BASE_DIR, class_name)
+            if not os.path.isdir(class_dir) or class_name == "DS": 
+                continue
+            db_path = os.path.join(class_dir, "attendance.db")
+            if not os.path.exists(db_path): 
+                continue
+            students = load_student_list(class_name)
+            if not students: 
+                continue
+            conn = sqlite3.connect(db_path)
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
+            present_ids = {r[0] for r in c.fetchall()}
+            conn.close()
+            absent_ids = [sid for sid in students.keys() if sid not in present_ids]
+            absent_names = [students[sid] for sid in absent_ids]
+            data.append({
+                "class": class_name,
+                "present": len(present_ids),
+                "absent": len(absent_ids),
+                "absent_names": ", ".join(absent_names)
+            })
+        return render_template('index.html', classes=data, user=current_user)
+    except Exception as e:
+        print(f"❌ Index error: {e}")
+        return render_template('index.html', classes=[], user=current_user)
 
 @app.route("/class/<class_name>/")
 @login_required
@@ -581,96 +557,16 @@ def export_excel_class(class_name):
     wb.save(excel_path)
     return send_file(excel_path, as_attachment=True)
 
-def reset_attendance_daily():
-    while True:
-        now = datetime.datetime.now()
-        noon = now.replace(hour=13, minute=0, second=0, microsecond=0)
-        evening = now.replace(hour=18, minute=0, second=0, microsecond=0)
-        if now < noon: 
-            next_reset = noon
-        elif now < evening: 
-            next_reset = evening
-        else: 
-            next_reset = (now + datetime.timedelta(days=1)).replace(hour=13, minute=0, second=0, microsecond=0)
-        sleep_time = (next_reset - now).total_seconds()
-        print(f"[Scheduler] Reset điểm danh lúc {next_reset.strftime('%d/%m/%Y %H:%M:%S')} (sau {sleep_time / 3600:.2f} giờ)")
-        time.sleep(sleep_time)
-        print("[Reset] Bắt đầu xóa điểm danh...")
-        if not os.path.exists(BASE_DIR): 
-            continue
-        for class_name in os.listdir(BASE_DIR):
-            if class_name == "DS": 
-                continue
-            db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
-            if os.path.exists(db_path):
-                try:
-                    conn = sqlite3.connect(db_path)
-                    conn.execute("DELETE FROM attendance")
-                    conn.commit()
-                    conn.close()
-                    print(f" ✓ Đã xóa lớp {class_name}")
-                except Exception as e: 
-                    print(f" ✗ Lỗi lớp {class_name}: {e}")
-        print("[Reset] Hoàn tất.")
+# ============================================================
+# STARTUP
+# ============================================================
+# Load API keys when app starts
+print("📡 Loading API keys...")
+load_api_keys()
 
-if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🚀 ATTENDANCE SYSTEM STARTING...")
-    print("="*70)
-    
-    # Khởi tạo databases
-    try:
-        print("📊 Initializing databases...")
-        init_user_db()
-        init_api_keys_db()
-        load_api_keys()
-        print("✅ Databases initialized")
-    except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
-        sys.exit(1)
-    
-    # Khởi động MQTT
-    try:
-        print("📡 Starting MQTT client...")
-        mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
-        mqtt_thread.start()
-        print("✅ MQTT client started")
-    except Exception as e:
-        print(f"❌ MQTT initialization failed: {e}")
-        sys.exit(1)
-    
-    # Khởi động scheduler
-    try:
-        print("⏰ Starting attendance scheduler...")
-        scheduler_thread = threading.Thread(target=reset_attendance_daily, daemon=True)
-        scheduler_thread.start()
-        print("✅ Scheduler started")
-    except Exception as e:
-        print(f"⚠️ Scheduler warning: {e}")
-    
-    # Lấy cấu hình
-    port = int(os.environ.get('PORT', 10000))
-    host = os.environ.get('HOST', '0.0.0.0')
-    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    
-    print("\n" + "="*70)
-    print("🎉 SERVER CONFIGURATION:")
-    print(f"   📡 MQTT Broker: {MQTT_BROKER}:{MQTT_PORT}")
-    print(f"   🌐 Web Server: http://{host}:{port}")
-    print(f"   👤 Default Admin: admin / admin123")
-    print(f"   🔧 Debug Mode: {debug}")
-    print(f"   🐳 Running in Docker: {os.path.exists('/.dockerenv')}")
-    print("="*70 + "\n")
-    
-    try:
-        # Start Flask app
-        app.run(
-            host=host, 
-            port=port, 
-            debug=debug, 
-            threaded=True,
-            use_reloader=False  # Tắt reloader trong Docker
-        )
-    except Exception as e:
-        print(f"❌ Server failed to start: {e}")
-        sys.exit(1)
+# Start MQTT in background thread
+print("📡 Starting MQTT client...")
+mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
+mqtt_thread.start()
+
+print("✅ Flask app initialized")
