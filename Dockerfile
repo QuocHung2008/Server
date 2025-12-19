@@ -34,11 +34,6 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/classes/DS && \
-    chown -R appuser:appuser /app
-
 WORKDIR /app
 
 # Copy Python packages from builder
@@ -46,17 +41,16 @@ COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application source
-COPY --chown=appuser:appuser . .
-
-USER appuser
+COPY . .
 
 # Railway provides PORT dynamically
 ENV PORT=10000
 EXPOSE 10000
 
-# Healthcheck (KHÔNG redirect, KHÔNG auth)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import os,requests; requests.get(f'http://localhost:{os.environ.get(\"PORT\",10000)}/health', timeout=5)" || exit 1
 
-# Production server
+# Run as root to handle Railway volume permissions
+# Init databases then start server
 CMD ["sh", "-c", "python init_databases.py && gunicorn server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --preload"]

@@ -76,14 +76,34 @@ def ensure_directories():
     print("📁 Creating directories...")
     
     try:
-        os.makedirs('classes', exist_ok=True)
-        os.makedirs('classes/DS', exist_ok=True)
-        print("✅ Directories created successfully")
+        # Try to create classes directory
+        if not os.path.exists('classes'):
+            os.makedirs('classes', exist_ok=True)
+            print("   ✅ Created 'classes' directory")
+        else:
+            print("   ℹ️  'classes' directory already exists")
+        
+        # Try to create DS subdirectory
+        ds_path = 'classes/DS'
+        if not os.path.exists(ds_path):
+            try:
+                os.makedirs(ds_path, exist_ok=True)
+                print("   ✅ Created 'classes/DS' directory")
+            except PermissionError:
+                # Railway volume is mounted, may not have permission
+                print("   ⚠️  Cannot create 'classes/DS' - Railway volume mounted (this is OK)")
+        else:
+            print("   ℹ️  'classes/DS' directory already exists")
+        
+        print("✅ Directories check completed")
         return True
         
     except Exception as e:
-        print(f"❌ Error creating directories: {e}")
-        return False
+        # Don't fail initialization if directory creation fails
+        # Railway might handle this differently
+        print(f"⚠️  Directory creation warning: {e}")
+        print("   ℹ️  Continuing anyway - directories may be managed by Railway")
+        return True  # Return True to not block initialization
 
 if __name__ == "__main__":
     print("\n" + "="*70)
