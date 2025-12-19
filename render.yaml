@@ -1,17 +1,11 @@
 services:
   - type: web
     name: attendance-system
-    runtime: python
+    runtime: docker             # <--- QUAN TRỌNG: Đổi thành docker
     plan: free
-    buildCommand: |
-      pip install --upgrade pip
-      pip install cmake
-      pip install dlib
-      pip install -r requirements.txt
+    # Không cần buildCommand nữa vì Dockerfile đã lo việc đó
     startCommand: python server.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.18
       - key: SECRET_KEY
         generateValue: true
       - key: PORT
@@ -22,5 +16,5 @@ services:
         value: 1883
     disk:
       name: attendance-data
-      mountPath: /opt/render/project/src
+      mountPath: /app/classes   # <--- Đổi đường dẫn cho khớp với Docker
       sizeGB: 1
