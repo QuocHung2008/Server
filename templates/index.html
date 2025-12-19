@@ -1,97 +1,128 @@
 {% extends "base.html" %}
 
-{% block title %}Bảng tổng hợp{% endblock %}
+{% block title %}Dashboard - Tổng quan{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto">
-    <div class="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl shadow-xl p-8 mb-8 text-white">
-        <h1 class="text-3xl font-bold mb-2">📊 Bảng tổng hợp điểm danh</h1>
-        <p class="text-blue-100">Theo dõi tình hình điểm danh của tất cả các lớp</p>
+<div class="space-y-6">
+    <!-- Hero Section -->
+    <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-8 shadow-2xl">
+        <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32"></div>
+        <div class="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full -ml-24 -mb-24"></div>
+        <div class="relative">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl md:text-4xl font-bold text-white mb-2">
+                        <i class="fas fa-chart-line mr-2"></i>
+                        Bảng tổng hợp
+                    </h1>
+                    <p class="text-blue-100">Theo dõi điểm danh của tất cả các lớp học</p>
+                </div>
+                <div class="hidden md:block">
+                    <div class="bg-white/20 backdrop-blur-lg rounded-2xl p-4 text-center">
+                        <p class="text-white/80 text-sm">Tổng số lớp</p>
+                        <p class="text-4xl font-bold text-white">{{ classes|length }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     {% if classes %}
-    <div class="grid gap-6">
+    <!-- Classes Grid -->
+    <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {% for cls in classes %}
-        <div class="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden hover:shadow-xl transition">
-            <div class="p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <a href="/class/{{ cls.class }}/" class="text-2xl font-bold text-slate-800 hover:text-blue-600 transition">
+        <div class="group bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden border border-slate-200 hover:scale-105">
+            <!-- Card Header -->
+            <div class="bg-gradient-to-r from-blue-500 to-indigo-600 p-6">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-2xl font-bold text-white">
+                        <i class="fas fa-graduation-cap mr-2"></i>
                         {{ cls.class }}
-                    </a>
-                    <a href="/class/{{ cls.class }}/export_excel" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        Excel
-                    </a>
-                </div>
-
-                <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div class="bg-green-50 rounded-lg p-4 border border-green-200">
-                        <div class="flex items-center gap-3">
-                            <div class="bg-green-500 p-2 rounded-lg">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                </svg>
-                            </div>
-                            <div>
-                                <p class="text-sm text-green-600 font-medium">Có mặt</p>
-                                <p class="text-2xl font-bold text-green-700">{{ cls.present }}</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="bg-red-50 rounded-lg p-4 border border-red-200">
-                        <div class="flex items-center gap-3">
-                            <div class="bg-red-500 p-2 rounded-lg">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                            </div>
-                            <div>
-                                <p class="text-sm text-red-600 font-medium">Vắng</p>
-                                <p class="text-2xl font-bold text-red-700">{{ cls.absent }}</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {% if cls.absent_names %}
-                <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                    <h3 class="font-semibold text-amber-800 mb-2 flex items-center gap-2">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                        </svg>
-                        Danh sách vắng
                     </h3>
-                    <ul class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-amber-700">
+                    <a href="/class/{{ cls.class }}/export_excel" 
+                       class="bg-white/20 hover:bg-white/30 backdrop-blur text-white px-3 py-2 rounded-lg transition-all duration-200 flex items-center gap-2">
+                        <i class="fas fa-download"></i>
+                        <span class="hidden sm:inline">Excel</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="p-6">
+                <div class="grid grid-cols-2 gap-4 mb-6">
+                    <!-- Present -->
+                    <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-green-500 p-3 rounded-lg shadow-lg">
+                                <i class="fas fa-user-check text-white text-xl"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-green-600 font-medium uppercase tracking-wide">Có mặt</p>
+                                <p class="text-3xl font-bold text-green-700">{{ cls.present }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Absent -->
+                    <div class="bg-gradient-to-br from-red-50 to-rose-50 rounded-xl p-4 border border-red-200">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-red-500 p-3 rounded-lg shadow-lg">
+                                <i class="fas fa-user-times text-white text-xl"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-red-600 font-medium uppercase tracking-wide">Vắng</p>
+                                <p class="text-3xl font-bold text-red-700">{{ cls.absent }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Absent List -->
+                {% if cls.absent_names %}
+                <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4 mb-4">
+                    <div class="flex items-start gap-2 mb-2">
+                        <i class="fas fa-exclamation-triangle text-amber-600 mt-1"></i>
+                        <h4 class="font-semibold text-amber-800">Danh sách vắng</h4>
+                    </div>
+                    <div class="space-y-1 max-h-32 overflow-y-auto">
                         {% for name in cls.absent_names.split(", ") %}
-                        <li class="flex items-center gap-2">
-                            <span class="w-2 h-2 bg-amber-400 rounded-full"></span>
-                            {{ name }}
-                        </li>
+                        <div class="flex items-center gap-2 text-sm text-amber-700 bg-white/50 rounded px-2 py-1">
+                            <i class="fas fa-user-slash text-xs"></i>
+                            <span>{{ name }}</span>
+                        </div>
                         {% endfor %}
-                    </ul>
+                    </div>
                 </div>
                 {% else %}
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                    <p class="text-blue-700 font-medium">🎉 Không có học sinh vắng</p>
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 text-center mb-4">
+                    <i class="fas fa-check-circle text-blue-600 text-2xl mb-2"></i>
+                    <p class="text-blue-700 font-medium">Không có học sinh vắng</p>
                 </div>
                 {% endif %}
+
+                <!-- View Button -->
+                <a href="/class/{{ cls.class }}/" 
+                   class="block w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-center py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg hover:shadow-xl">
+                    <i class="fas fa-eye mr-2"></i>
+                    Xem chi tiết
+                </a>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <div class="bg-white rounded-2xl shadow-xl p-16 text-center border border-slate-200">
-        <div class="inline-block p-4 bg-slate-100 rounded-full mb-4">
-            <svg class="w-16 h-16 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-            </svg>
+    <!-- Empty State -->
+    <div class="bg-white rounded-3xl shadow-xl p-16 text-center border border-slate-200">
+        <div class="inline-block p-6 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full mb-6">
+            <i class="fas fa-inbox text-6xl text-blue-500"></i>
         </div>
-        <h3 class="text-2xl font-bold text-slate-700 mb-2">Chưa có lớp học nào</h3>
-        <p class="text-slate-500">Hãy thêm lớp học đầu tiên của bạn</p>
+        <h3 class="text-3xl font-bold text-slate-700 mb-3">Chưa có lớp học nào</h3>
+        <p class="text-slate-500 text-lg mb-6">Hãy thêm lớp học đầu tiên của bạn để bắt đầu</p>
+        <button class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-8 py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg hover:shadow-xl">
+            <i class="fas fa-plus mr-2"></i>
+            Thêm lớp học
+        </button>
     </div>
     {% endif %}
 </div>
