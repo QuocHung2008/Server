@@ -1,20 +1,26 @@
 services:
   - type: web
     name: attendance-system
-    runtime: docker             # <--- QUAN TRỌNG: Đổi thành docker
+    runtime: docker
     plan: free
-    # Không cần buildCommand nữa vì Dockerfile đã lo việc đó
-    startCommand: python server.py
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: SECRET_KEY
         generateValue: true
       - key: PORT
         value: 10000
+      - key: HOST
+        value: 0.0.0.0
       - key: MQTT_BROKER
         value: broker.hivemq.com
       - key: MQTT_PORT
         value: 1883
+      - key: MQTT_KEEPALIVE
+        value: 60
+      - key: DEBUG
+        value: false
     disk:
       name: attendance-data
-      mountPath: /app/classes   # <--- Đổi đường dẫn cho khớp với Docker
+      mountPath: /app/classes
       sizeGB: 1
+    healthCheckPath: /

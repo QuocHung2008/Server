@@ -29,11 +29,6 @@ MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')  # ✅ ĐÃ S�
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
 
-import uuid
-mqtt_client = mqtt.Client(client_id=f"render-server-{uuid.uuid4().hex[:8]}")
-mqtt_client.on_connect = on_connect
-mqtt_client.on_message = on_message
-
 # API Key cho ESP32
 VALID_API_KEYS = {}  # {api_key: {class_name, device_name, created_at}}
 
@@ -452,7 +447,8 @@ def on_message(client, userdata, msg):
             if class_name in image_buffer:
                 del image_buffer[class_name]
 
-mqtt_client = mqtt.Client()
+import uuid
+mqtt_client = mqtt.Client(client_id=f"render-server-{uuid.uuid4().hex[:8]}")
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
