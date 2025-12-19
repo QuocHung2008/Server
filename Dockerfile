@@ -1,37 +1,76 @@
-# Sử dụng Python 3.9 bản nhẹ (slim) để tiết kiệm dung lượng
-FROM python:3.9-slim
+# ==================== STAGE 1: BUILD ====================
+FROM python:3.9-slim-bullseye AS builder
 
-# Thiết lập thư mục làm việc trong container
-WORKDIR /app
-
-# 1. Cài đặt các công cụ hệ thống (Đây là bước fix lỗi apt-get bạn gặp phải)
-# - build-essential & cmake: Cần để biên dịch dlib
-# - libgl1 & libglib2.0: Cần cho OpenCV xử lý ảnh
-# Sửa đoạn cài đặt hệ thống thành thế này:
-RUN apt-get update --fix-missing && apt-get install -y \
-    cmake \
+# Cài đặt dependencies build
+RUN apt-get update && apt-get install -y \
     build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && apt-get clean \
+    cmake \
+    git \
+    wget \
+    libopenblas-dev \
+    liblapack-dev \
+    libx11-dev \
+    libgtk-3-dev \
+    libboost-python-dev \
+    libboost-thread-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Copy file requirements trước để tận dụng cache (giúp build nhanh hơn các lần sau)
+# Tạo thư mục làm việc
+WORKDIR /build
+
+# Copy requirements và build dlib trước
 COPY requirements.txt .
 
-# 3. Cài dlib và cmake riêng (vì dlib compile rất lâu)
-# Lưu ý: Quá trình cài dlib có thể mất 10-20 phút ở lần build đầu tiên
-RUN pip install --no-cache-dir cmake
-RUN pip install --no-cache-dir dlib==19.24.0
+# Build dlib từ source (stable hơn pip)
+RUN pip install --no-cache-dir cmake numpy && \
+    git clone -b 'v19.24' --single-branch https://github.com/davisking/dlib.git && \
+    cd dlib && \
+    mkdir build && cd build && \
+    cmake .. -DDLIB_USE_CUDA=OFF -DUSE_AVX_INSTRUCTIONS=ON && \
+    cmake --build . --config Release && \
+    cd .. && python setup.py install && \
+    cd .. && rm -rf dlib
 
-# 4. Cài các thư viện còn lại
+# Cài các packages khác
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copy toàn bộ code vào container
-COPY . .
+# ==================== STAGE 2: RUNTIME ====================
+FROM python:3.9-slim-bullseye
 
-# 6. Mở port (Render sẽ dùng port này)
+# Cài runtime dependencies (chỉ cần runtime, không cần build tools)
+RUN apt-get update && apt-get install -y \
+    libopenblas0 \
+    libgomp1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tạo user non-root để bảo mật
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/classes/DS && \
+    chown -R appuser:appuser /app
+
+WORKDIR /app
+
+# Copy Python packages từ builder stage
+COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --chown=appuser:appuser . .
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
 EXPOSE 10000
 
-# 7. Lệnh chạy server
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:10000/', timeout=5)" || exit 1
+
+# Start command
 CMD ["python", "server.py"]

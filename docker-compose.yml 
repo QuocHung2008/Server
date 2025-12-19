@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  attendance-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: attendance-system
+    ports:
+      - "5000:10000"
+    environment:
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - PORT=10000
+      - MQTT_BROKER=broker.hivemq.com
+      - MQTT_PORT=1883
+    volumes:
+      # Mount để giữ data khi container restart
+      - ./classes:/app/classes
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:10000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - attendance-net
+
+networks:
+  attendance-net:
+    driver: bridge

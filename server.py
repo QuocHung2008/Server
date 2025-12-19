@@ -8,6 +8,8 @@ import os, sqlite3, pickle, cv2, numpy as np, face_recognition
 import datetime, threading, time, json, secrets
 import paho.mqtt.client as mqtt
 import base64
+import signal
+import sys
 
 DS_DIR = "classes/DS"
 BASE_DIR = "classes"
@@ -38,6 +40,14 @@ VALID_API_KEYS = {}  # {api_key: {class_name, device_name, created_at}}
 LOCKS = {}
 ENCODINGS_CACHE = {}
 image_buffer = {}
+
+def signal_handler(sig, frame):
+    print('\n🛑 Shutting down gracefully...')
+    mqtt_client.disconnect()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # ============================================================
 # USER MODEL & DATABASE
@@ -604,25 +614,63 @@ def reset_attendance_daily():
         print("[Reset] Hoàn tất.")
 
 if __name__ == "__main__":
+    print("\n" + "="*70)
+    print("🚀 ATTENDANCE SYSTEM STARTING...")
+    print("="*70)
+    
     # Khởi tạo databases
-    init_user_db()
-    init_api_keys_db()
-    load_api_keys()
+    try:
+        print("📊 Initializing databases...")
+        init_user_db()
+        init_api_keys_db()
+        load_api_keys()
+        print("✅ Databases initialized")
+    except Exception as e:
+        print(f"❌ Database initialization failed: {e}")
+        sys.exit(1)
     
     # Khởi động MQTT
-    mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
-    mqtt_thread.start()
+    try:
+        print("📡 Starting MQTT client...")
+        mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
+        mqtt_thread.start()
+        print("✅ MQTT client started")
+    except Exception as e:
+        print(f"❌ MQTT initialization failed: {e}")
+        sys.exit(1)
     
     # Khởi động scheduler
-    threading.Thread(target=reset_attendance_daily, daemon=True).start()
+    try:
+        print("⏰ Starting attendance scheduler...")
+        scheduler_thread = threading.Thread(target=reset_attendance_daily, daemon=True)
+        scheduler_thread.start()
+        print("✅ Scheduler started")
+    except Exception as e:
+        print(f"⚠️ Scheduler warning: {e}")
     
-    print("\n" + "="*60)
-    print("🚀 Server đang chạy:")
-    print(f"   📡 MQTT: {MQTT_BROKER}:{MQTT_PORT}")
-    print(f"   🌐 Web: http://0.0.0.0:5000")
-    print(f"   👤 Admin: admin / admin123")
-    print("="*60 + "\n")
+    # Lấy cấu hình
+    port = int(os.environ.get('PORT', 10000))
+    host = os.environ.get('HOST', '0.0.0.0')
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    # Lấy port từ env (cho Render)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    print("\n" + "="*70)
+    print("🎉 SERVER CONFIGURATION:")
+    print(f"   📡 MQTT Broker: {MQTT_BROKER}:{MQTT_PORT}")
+    print(f"   🌐 Web Server: http://{host}:{port}")
+    print(f"   👤 Default Admin: admin / admin123")
+    print(f"   🔧 Debug Mode: {debug}")
+    print(f"   🐳 Running in Docker: {os.path.exists('/.dockerenv')}")
+    print("="*70 + "\n")
+    
+    try:
+        # Start Flask app
+        app.run(
+            host=host, 
+            port=port, 
+            debug=debug, 
+            threaded=True,
+            use_reloader=False  # Tắt reloader trong Docker
+        )
+    except Exception as e:
+        print(f"❌ Server failed to start: {e}")
+        sys.exit(1)

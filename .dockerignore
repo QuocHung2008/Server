@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Database files (sẽ tạo mới trên server)
+*.db
+*.pkl
+*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docs
+README.md
+*.md
+
+# Testing
+tests/
+*.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+docker-compose.yml
+.env.local
+.env.development
+
+# Render specific (không cần nếu deploy)
+render.yaml
