@@ -240,6 +240,10 @@ def delete_api_key(key_id):
     flash('Đã vô hiệu hóa API key', 'success')
     return redirect(url_for('manage_api_keys'))
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
 # ============================================================
 # HELPER FUNCTIONS (giữ nguyên)
 # ============================================================
