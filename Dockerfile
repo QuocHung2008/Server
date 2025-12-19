@@ -7,11 +7,13 @@ WORKDIR /app
 # 1. Cài đặt các công cụ hệ thống (Đây là bước fix lỗi apt-get bạn gặp phải)
 # - build-essential & cmake: Cần để biên dịch dlib
 # - libgl1 & libglib2.0: Cần cho OpenCV xử lý ảnh
-RUN apt-get update && apt-get install -y \
+# Sửa đoạn cài đặt hệ thống thành thế này:
+RUN apt-get update --fix-missing && apt-get install -y \
     cmake \
     build-essential \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copy file requirements trước để tận dụng cache (giúp build nhanh hơn các lần sau)
