@@ -23,9 +23,14 @@ login_manager.login_view = 'login'
 login_manager.login_message = 'Vui lòng đăng nhập để truy cập.'
 
 # MQTT Configuration (từ environment variables cho Render)
-MQTT_BROKER = os.environ.get('MQTT_BROKER', '172.20.10.14')
+MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')  # ✅ ĐÃ SỬA
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
+
+import uuid
+mqtt_client = mqtt.Client(client_id=f"render-server-{uuid.uuid4().hex[:8]}")
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
 
 # API Key cho ESP32
 VALID_API_KEYS = {}  # {api_key: {class_name, device_name, created_at}}

@@ -1,21 +1,26 @@
 services:
   - type: web
     name: attendance-system
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python server.py"
+    runtime: python
+    plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install cmake
+      pip install dlib
+      pip install -r requirements.txt
+    startCommand: python server.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.0
+        value: 3.9.18
       - key: SECRET_KEY
         generateValue: true
       - key: PORT
         value: 10000
       - key: MQTT_BROKER
-        value: broker.hivemq.com  # Public MQTT broker
+        value: broker.hivemq.com
       - key: MQTT_PORT
         value: 1883
     disk:
-      name: data
+      name: attendance-data
       mountPath: /opt/render/project/src
       sizeGB: 1
