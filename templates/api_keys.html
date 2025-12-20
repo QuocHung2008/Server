@@ -38,6 +38,7 @@
                 </button>
             </div>
             
+            {% if available_classes %}
             <form method="POST" action="/api_keys/create" class="space-y-6">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <!-- Class Selection -->
@@ -52,13 +53,11 @@
                             required
                         >
                             <option value="">-- Chọn lớp --</option>
-                            <option value="12T1">12T1</option>
-                            <option value="12T2">12T2</option>
-                            <option value="12T3">12T3</option>
-                            <option value="11A1">11A1</option>
-                            <option value="11A2">11A2</option>
-                            <option value="10B1">10B1</option>
+                            {% for class_name in available_classes %}
+                            <option value="{{ class_name }}">{{ class_name }}</option>
+                            {% endfor %}
                         </select>
+                        <p class="text-xs text-slate-500 mt-1">Chỉ hiển thị lớp đã tải lên danh sách</p>
                     </div>
 
                     <!-- Device Name -->
@@ -94,6 +93,27 @@
                     </button>
                 </div>
             </form>
+            {% else %}
+            <!-- No Classes Warning -->
+            <div class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-xl p-6">
+                <div class="flex items-start gap-4">
+                    <div class="bg-amber-500 p-3 rounded-lg">
+                        <i class="fas fa-exclamation-triangle text-white text-2xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-amber-900 mb-2">Chưa có lớp học nào</h3>
+                        <p class="text-amber-800 text-sm mb-4">
+                            Vui lòng tải lên danh sách lớp trước khi tạo API key
+                        </p>
+                        <a href="{{ url_for('manage_classes') }}" 
+                           class="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-semibold transition-all">
+                            <i class="fas fa-arrow-right"></i>
+                            Quản lý danh sách lớp
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -166,7 +186,7 @@
                         <!-- Created Date -->
                         <td class="px-6 py-4 text-sm text-slate-500">
                             <i class="fas fa-clock mr-2"></i>
-                            {{ key[4] }}
+                            {{ key[4][:19] if key[4] else '-' }}
                         </td>
 
                         <!-- Status -->
@@ -186,7 +206,7 @@
 
                         <!-- Actions -->
                         <td class="px-6 py-4 text-right">
-                            <form method="POST" action="/api_keys/delete/{{ key[0] }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn vô hiệu hóa API key này?')">
+                            <form method="POST" action="/api_keys/delete/{{ key[0] }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn xóa API key này?')">
                                 <button 
                                     type="submit"
                                     class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-sm font-semibold transition-all duration-200"
@@ -237,11 +257,11 @@
         <div class="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border border-green-200">
             <div class="flex items-start gap-4">
                 <div class="bg-green-500 p-3 rounded-lg">
-                    <i class="fas fa-sync-alt text-white text-2xl"></i>
+                    <i class="fas fa-graduation-cap text-white text-2xl"></i>
                 </div>
                 <div>
-                    <h4 class="font-bold text-green-900 mb-1">Tự động làm mới</h4>
-                    <p class="text-sm text-green-700">API key không hết hạn, có thể thu hồi bất cứ lúc nào</p>
+                    <h4 class="font-bold text-green-900 mb-1">Theo lớp</h4>
+                    <p class="text-sm text-green-700">Mỗi API key gắn với một lớp học cụ thể</p>
                 </div>
             </div>
         </div>
@@ -261,7 +281,7 @@
 </div>
 
 <!-- Toast notification for copy -->
-<div id="copyToast" class="fixed bottom-4 right-4 bg-green-500 text-white px-6 py-3 rounded-xl shadow-lg transform translate-y-20 opacity-0 transition-all duration-300">
+<div id="copyToast" class="fixed bottom-4 right-4 bg-green-500 text-white px-6 py-3 rounded-xl shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 z-50">
     <i class="fas fa-check-circle mr-2"></i>
     Đã copy API key!
 </div>

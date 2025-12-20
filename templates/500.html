@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}500 - Lỗi máy chủ{% endblock %}
+{% block page_title %}Lỗi 500{% endblock %}
+
+{% block content %}
+<div class="min-h-[70vh] flex items-center justify-center">
+    <div class="text-center max-w-2xl">
+        <div class="inline-block p-6 bg-gradient-to-br from-red-100 to-orange-100 rounded-full mb-6">
+            <i class="fas fa-exclamation-triangle text-7xl text-red-600"></i>
+        </div>
+        
+        <h1 class="text-6xl font-bold text-slate-800 mb-4">500</h1>
+        <h2 class="text-3xl font-bold text-slate-700 mb-4">Lỗi máy chủ</h2>
+        
+        <p class="text-slate-500 text-lg mb-8">
+            Đã xảy ra lỗi trên máy chủ. Chúng tôi đang khắc phục sự cố.
+        </p>
+        
+        <div class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-xl p-6 mb-8 text-left">
+            <div class="flex items-start gap-4">
+                <i class="fas fa-info-circle text-amber-600 text-2xl mt-1"></i>
+                <div>
+                    <h3 class="font-bold text-amber-900 mb-2">Bạn có thể thử:</h3>
+                    <ul class="text-sm text-amber-800 space-y-1">
+                        <li><i class="fas fa-check text-amber-600 mr-2"></i>Tải lại trang</li>
+                        <li><i class="fas fa-check text-amber-600 mr-2"></i>Xóa cache và cookies của trình duyệt</li>
+                        <li><i class="fas fa-check text-amber-600 mr-2"></i>Thử lại sau vài phút</li>
+                        <li><i class="fas fa-check text-amber-600 mr-2"></i>Liên hệ quản trị viên nếu lỗi vẫn tiếp diễn</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="flex gap-4 justify-center">
+            <button 
+                onclick="location.reload()"
+                class="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2">
+                <i class="fas fa-sync-alt"></i>
+                Tải lại trang
+            </button>
+            
+            <a href="/" 
+               class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-6 py-3 rounded-xl font-semibold transition-all duration-200 flex items-center gap-2">
+                <i class="fas fa-home"></i>
+                Về trang chủ
+            </a>
+        </div>
+        
+        <div class="mt-8 text-sm text-slate-500">
+            <p>Mã lỗi: 500 | Thời gian: <span id="errorTime"></span></p>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('errorTime').textContent = new Date().toLocaleString('vi-VN');
+</script>
+{% endblock %}

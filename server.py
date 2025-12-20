@@ -127,10 +127,15 @@ def load_api_keys():
         print(f"❌ Error loading API keys: {e}")
 
 def verify_api_key(api_key, class_name):
+    """Verify API key và class name"""
     if api_key in VALID_API_KEYS:
         if VALID_API_KEYS[api_key]['class_name'] == class_name:
             return True
     return False
+
+def validate_class_exists(class_name):
+    """Kiểm tra lớp có tồn tại trong danh sách hay không"""
+    return class_name in get_all_classes()
 
 # ============================================================
 # AUTHENTICATION ROUTES
@@ -290,6 +295,21 @@ def delete_class(class_name):
         if os.path.exists(ds_file):
             os.remove(ds_file)
         
+        # Xóa các API key liên quan
+        try:
+            conn = sqlite3.connect('api_keys.db')
+            c = conn.cursor()
+            c.execute("DELETE FROM api_keys WHERE class_name=?", (class_name,))
+            deleted_count = c.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                load_api_keys()  # Reload API keys
+                print(f"🗑️ Deleted {deleted_count} API keys for class {class_name}")
+        except Exception as e:
+            print(f"⚠️ Error deleting API keys: {e}")
+        
         flash(f'Đã xóa lớp {class_name}', 'success')
     except Exception as e:
         print(f"❌ Delete error: {e}")
@@ -322,16 +342,15 @@ def manage_api_keys():
 @login_required
 def create_api_key():
     class_name = request.form.get('class_name')
-    device_name = request.form.get('device_name')
+    device_name = request.form.get('device_name', '').strip()
     
     if not class_name:
         flash('Vui lòng chọn lớp', 'error')
         return redirect(url_for('manage_api_keys'))
     
     # Kiểm tra lớp có tồn tại không
-    available_classes = get_all_classes()
-    if class_name not in available_classes:
-        flash('Lớp không tồn tại', 'error')
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại trong hệ thống', 'error')
         return redirect(url_for('manage_api_keys'))
     
     try:
@@ -344,7 +363,7 @@ def create_api_key():
         conn.close()
         
         load_api_keys()
-        flash(f'Tạo API key thành công: {api_key}', 'success')
+        flash(f'Tạo API key thành công cho lớp {class_name}', 'success')
     except Exception as e:
         print(f"❌ Error creating API key: {e}")
         flash('Lỗi tạo API key', 'error')
@@ -357,12 +376,12 @@ def delete_api_key(key_id):
     try:
         conn = sqlite3.connect('api_keys.db')
         c = conn.cursor()
-        c.execute("UPDATE api_keys SET is_active=0 WHERE id=?", (key_id,))
+        c.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
         conn.commit()
         conn.close()
         
         load_api_keys()
-        flash('Đã vô hiệu hóa API key', 'success')
+        flash('Đã xóa API key', 'success')
     except Exception as e:
         print(f"❌ Error deleting API key: {e}")
         flash('Lỗi xóa API key', 'error')
@@ -610,6 +629,11 @@ def index():
 @app.route("/class/<class_name>/")
 @login_required
 def class_home(class_name):
+    # Validate class exists
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    
     class_dir = ensure_class(class_name)
     students_dict = load_student_list(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
@@ -630,6 +654,11 @@ def class_home(class_name):
 @app.route("/class/<class_name>/add_student", methods=["GET", "POST"])
 @login_required
 def add_student(class_name):
+    # Validate class exists
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    
     class_dir = ensure_class(class_name)
     if request.method == "POST":
         student_id = request.form.get("student_id", "").strip()
@@ -657,6 +686,11 @@ def add_student(class_name):
 @app.route("/class/<class_name>/history")
 @login_required
 def attendance_history(class_name):
+    # Validate class exists
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    
     class_dir = ensure_class(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
     conn = sqlite3.connect(db_path)
@@ -669,6 +703,11 @@ def attendance_history(class_name):
 @app.route("/class/<class_name>/export_excel")
 @login_required
 def export_excel_class(class_name):
+    # Validate class exists
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    
     db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
     excel_path = f"{class_name}_attendance.xlsx"
     conn = sqlite3.connect(db_path)
@@ -704,6 +743,10 @@ def api_recognize():
         
         if not verify_api_key(api_key, class_name):
             return jsonify({"error": "Invalid API key"}), 401
+        
+        # Validate class exists
+        if not validate_class_exists(class_name):
+            return jsonify({"error": "Class not found"}), 404
         
         # Lấy image data
         img_data = request.get_data()
@@ -751,20 +794,113 @@ def api_classes_list():
     except Exception as e:
         return jsonify({"classes": [], "error": str(e)}), 500
 
+@app.route('/api/class/<class_name>/students')
+@login_required
+def api_class_students(class_name):
+    """API để lấy danh sách học sinh trong lớp"""
+    try:
+        if not validate_class_exists(class_name):
+            return jsonify({"error": "Class not found"}), 404
+        
+        students = load_student_list(class_name)
+        student_list = [{"id": k, "name": v} for k, v in sorted(students.items())]
+        
+        return jsonify({
+            "class": class_name,
+            "students": student_list,
+            "count": len(student_list)
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/class/<class_name>/attendance/today')
+@login_required
+def api_today_attendance(class_name):
+    """API để lấy thông tin điểm danh hôm nay"""
+    try:
+        if not validate_class_exists(class_name):
+            return jsonify({"error": "Class not found"}), 404
+        
+        class_dir = ensure_class(class_name)
+        db_path = os.path.join(class_dir, "attendance.db")
+        
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT student_id, name, first_time, status FROM attendance WHERE date=?", (today,))
+        records = c.fetchall()
+        conn.close()
+        
+        attendance_list = []
+        for record in records:
+            attendance_list.append({
+                "student_id": record[0],
+                "name": record[1],
+                "time": record[2],
+                "status": record[3]
+            })
+        
+        return jsonify({
+            "class": class_name,
+            "date": today,
+            "attendance": attendance_list,
+            "present_count": len(attendance_list)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ============================================================
+# ERROR HANDLERS
+# ============================================================
+@app.errorhandler(404)
+def not_found(e):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    return render_template('500.html'), 500
+
+# ============================================================
+# GRACEFUL SHUTDOWN
+# ============================================================
+def signal_handler(sig, frame):
+    print('\n🛑 Shutting down gracefully...')
+    mqtt_client.disconnect()
+    print('✅ MQTT disconnected')
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 # ============================================================
 # STARTUP
 # ============================================================
-# Ensure directories exist
-os.makedirs(DS_DIR, exist_ok=True)
-os.makedirs(BASE_DIR, exist_ok=True)
-
-# Load API keys when app starts
-print("📡 Loading API keys...")
-load_api_keys()
-
-# Start MQTT in background thread
-print("📡 Starting MQTT client...")
-mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
-mqtt_thread.start()
-
-print("✅ Flask app initialized")
+if __name__ == "__main__":
+    # Ensure directories exist
+    os.makedirs(DS_DIR, exist_ok=True)
+    os.makedirs(BASE_DIR, exist_ok=True)
+    
+    # Load API keys when app starts
+    print("📡 Loading API keys...")
+    load_api_keys()
+    
+    # Start MQTT in background thread
+    print("📡 Starting MQTT client...")
+    mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
+    mqtt_thread.start()
+    
+    print("✅ Flask app initialized")
+    
+    # Run Flask app
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    # Production mode (gunicorn)
+    os.makedirs(DS_DIR, exist_ok=True)
+    os.makedirs(BASE_DIR, exist_ok=True)
+    load_api_keys()
+    mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
+    mqtt_thread.start()
+    print("✅ Flask app initialized")
