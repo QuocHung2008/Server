@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, session, flash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from encode_known_faces import build_encodings_for_class
 from typing import Dict
 from openpyxl import load_workbook, Workbook
@@ -36,6 +37,45 @@ VALID_API_KEYS = {}
 LOCKS = {}
 ENCODINGS_CACHE = {}
 image_buffer = {}
+
+# ============================================================
+# HELPER FUNCTIONS - CLASS MANAGEMENT
+# ============================================================
+def get_all_classes():
+    """Lấy danh sách tất cả các lớp từ file DS_*.xlsx"""
+    classes = []
+    if os.path.exists(DS_DIR):
+        for filename in os.listdir(DS_DIR):
+            if filename.startswith('DS_') and filename.endswith('.xlsx'):
+                class_name = filename[3:-5]  # Remove 'DS_' and '.xlsx'
+                classes.append(class_name)
+    return sorted(classes)
+
+def ensure_class_structure(class_name):
+    """Đảm bảo cấu trúc thư mục cho lớp"""
+    class_dir = os.path.join(BASE_DIR, class_name)
+    known_faces_dir = os.path.join(class_dir, "known_faces")
+    os.makedirs(known_faces_dir, exist_ok=True)
+    
+    # Create attendance database
+    db_path = os.path.join(class_dir, "attendance.db")
+    if not os.path.exists(db_path):
+        conn = sqlite3.connect(db_path)
+        with conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id TEXT,
+                    name TEXT,
+                    date TEXT,
+                    first_time TEXT,
+                    status TEXT,
+                    timestamp_iso TEXT)""")
+        conn.close()
+    
+    if class_name not in LOCKS:
+        LOCKS[class_name] = threading.Lock()
+    
+    return class_dir
 
 # ============================================================
 # USER MODEL
@@ -163,22 +203,120 @@ def change_password():
     return render_template('change_password.html')
 
 # ============================================================
+# CLASS MANAGEMENT ROUTES
+# ============================================================
+@app.route('/classes/manage')
+@login_required
+def manage_classes():
+    """Trang quản lý danh sách lớp"""
+    classes = get_all_classes()
+    return render_template('manage_classes.html', classes=classes)
+
+@app.route('/classes/upload', methods=['POST'])
+@login_required
+def upload_class_list():
+    """Upload file Excel danh sách lớp"""
+    if 'file' not in request.files:
+        flash('Không có file được chọn', 'error')
+        return redirect(url_for('manage_classes'))
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        flash('Không có file được chọn', 'error')
+        return redirect(url_for('manage_classes'))
+    
+    if not file.filename.endswith('.xlsx'):
+        flash('Chỉ chấp nhận file .xlsx', 'error')
+        return redirect(url_for('manage_classes'))
+    
+    try:
+        # Đảm bảo thư mục DS tồn tại
+        os.makedirs(DS_DIR, exist_ok=True)
+        
+        # Lưu file
+        filename = secure_filename(file.filename)
+        
+        # Đảm bảo tên file có format DS_ClassName.xlsx
+        if not filename.startswith('DS_'):
+            flash('Tên file phải có định dạng: DS_TenLop.xlsx (ví dụ: DS_12T1.xlsx)', 'error')
+            return redirect(url_for('manage_classes'))
+        
+        filepath = os.path.join(DS_DIR, filename)
+        file.save(filepath)
+        
+        # Validate file Excel
+        try:
+            wb = load_workbook(filepath, read_only=True)
+            ws = wb.active
+            
+            # Kiểm tra header
+            header = [cell.value for cell in ws[1]]
+            if len(header) < 2:
+                os.remove(filepath)
+                flash('File Excel phải có ít nhất 2 cột: Mã học sinh và Tên học sinh', 'error')
+                return redirect(url_for('manage_classes'))
+            
+            # Đếm số học sinh
+            student_count = sum(1 for row in ws.iter_rows(min_row=2, max_col=2, values_only=True) if row[0] and row[1])
+            
+            wb.close()
+            
+            # Tạo cấu trúc thư mục cho lớp
+            class_name = filename[3:-5]  # Remove 'DS_' and '.xlsx'
+            ensure_class_structure(class_name)
+            
+            flash(f'Tải lên thành công! Lớp {class_name} có {student_count} học sinh', 'success')
+            
+        except Exception as e:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            flash(f'File Excel không hợp lệ: {str(e)}', 'error')
+            return redirect(url_for('manage_classes'))
+        
+    except Exception as e:
+        print(f"❌ Upload error: {e}")
+        flash(f'Lỗi tải file: {str(e)}', 'error')
+    
+    return redirect(url_for('manage_classes'))
+
+@app.route('/classes/delete/<class_name>', methods=['POST'])
+@login_required
+def delete_class(class_name):
+    """Xóa lớp học"""
+    try:
+        # Xóa file DS
+        ds_file = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
+        if os.path.exists(ds_file):
+            os.remove(ds_file)
+        
+        flash(f'Đã xóa lớp {class_name}', 'success')
+    except Exception as e:
+        print(f"❌ Delete error: {e}")
+        flash(f'Lỗi xóa lớp: {str(e)}', 'error')
+    
+    return redirect(url_for('manage_classes'))
+
+# ============================================================
 # API KEY ROUTES
 # ============================================================
 @app.route('/api_keys')
 @login_required
 def manage_api_keys():
     try:
+        # Lấy danh sách lớp có sẵn
+        available_classes = get_all_classes()
+        
         conn = sqlite3.connect('api_keys.db')
         c = conn.cursor()
         c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
         keys = c.fetchall()
         conn.close()
-        return render_template('api_keys.html', keys=keys)
+        return render_template('api_keys.html', keys=keys, available_classes=available_classes)
     except Exception as e:
         print(f"❌ Error loading API keys: {e}")
         flash('Lỗi tải API keys', 'error')
-        return render_template('api_keys.html', keys=[])
+        return render_template('api_keys.html', keys=[], available_classes=[])
 
 @app.route('/api_keys/create', methods=['POST'])
 @login_required
@@ -188,6 +326,12 @@ def create_api_key():
     
     if not class_name:
         flash('Vui lòng chọn lớp', 'error')
+        return redirect(url_for('manage_api_keys'))
+    
+    # Kiểm tra lớp có tồn tại không
+    available_classes = get_all_classes()
+    if class_name not in available_classes:
+        flash('Lớp không tồn tại', 'error')
         return redirect(url_for('manage_api_keys'))
     
     try:
@@ -262,24 +406,7 @@ def get_status_by_time(now):
     return "Trễ" if now > afternoon_limit else "Có mặt"
 
 def ensure_class(class_name):
-    class_dir = os.path.join(BASE_DIR, class_name)
-    os.makedirs(os.path.join(class_dir, "known_faces"), exist_ok=True)
-    db_path = os.path.join(class_dir, "attendance.db")
-    if not os.path.exists(db_path):
-        conn = sqlite3.connect(db_path)
-        with conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    student_id TEXT,
-                    name TEXT,
-                    date TEXT,
-                    first_time TEXT,
-                    status TEXT,
-                    timestamp_iso TEXT)""")
-        conn.close()
-    if class_name not in LOCKS:
-        LOCKS[class_name] = threading.Lock()
-    return class_dir
+    return ensure_class_structure(class_name)
 
 def get_encodings_data(class_name):
     if class_name in ENCODINGS_CACHE:
@@ -446,31 +573,35 @@ def index():
     try:
         data = []
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        if not os.path.exists(BASE_DIR): 
-            os.makedirs(BASE_DIR)
-        for class_name in os.listdir(BASE_DIR):
-            class_dir = os.path.join(BASE_DIR, class_name)
-            if not os.path.isdir(class_dir) or class_name == "DS": 
-                continue
+        
+        # Lấy danh sách lớp từ file DS
+        all_classes = get_all_classes()
+        
+        for class_name in all_classes:
+            # Đảm bảo cấu trúc thư mục tồn tại
+            class_dir = ensure_class_structure(class_name)
             db_path = os.path.join(class_dir, "attendance.db")
-            if not os.path.exists(db_path): 
-                continue
+            
             students = load_student_list(class_name)
-            if not students: 
+            if not students:
                 continue
+            
             conn = sqlite3.connect(db_path)
             c = conn.cursor()
             c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
             present_ids = {r[0] for r in c.fetchall()}
             conn.close()
+            
             absent_ids = [sid for sid in students.keys() if sid not in present_ids]
             absent_names = [students[sid] for sid in absent_ids]
+            
             data.append({
                 "class": class_name,
                 "present": len(present_ids),
                 "absent": len(absent_ids),
                 "absent_names": ", ".join(absent_names)
             })
+        
         return render_template('index.html', classes=data, user=current_user)
     except Exception as e:
         print(f"❌ Index error: {e}")
@@ -558,8 +689,75 @@ def export_excel_class(class_name):
     return send_file(excel_path, as_attachment=True)
 
 # ============================================================
+# API ENDPOINTS FOR ESP32 & AJAX
+# ============================================================
+@app.route('/api/recognize', methods=['POST'])
+def api_recognize():
+    """HTTP endpoint cho ESP32 gửi ảnh qua HTTP"""
+    try:
+        # Kiểm tra API key
+        api_key = request.headers.get('X-API-Key')
+        class_name = request.headers.get('X-Class-Name')
+        
+        if not api_key or not class_name:
+            return jsonify({"error": "Missing API key or class name"}), 401
+        
+        if not verify_api_key(api_key, class_name):
+            return jsonify({"error": "Invalid API key"}), 401
+        
+        # Lấy image data
+        img_data = request.get_data()
+        
+        if not img_data:
+            return jsonify({"error": "No image data"}), 400
+        
+        # Nhận diện khuôn mặt
+        recognized_name = recognize_face_from_image(class_name, img_data)
+        
+        # Gửi kết quả qua MQTT
+        result_topic = f"esp32cam/{class_name}/result"
+        result_json = json.dumps({"name": recognized_name})
+        mqtt_client.publish(result_topic, result_json)
+        
+        print(f"[HTTP API] {class_name}: {recognized_name}")
+        
+        return jsonify({
+            "success": True,
+            "name": recognized_name,
+            "class": class_name
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/class/<class_name>/count')
+@login_required
+def api_class_count(class_name):
+    """API để lấy số lượng học sinh trong lớp"""
+    try:
+        students = load_student_list(class_name)
+        return jsonify({"count": len(students)}), 200
+    except Exception as e:
+        return jsonify({"count": 0, "error": str(e)}), 500
+
+@app.route('/api/classes/list')
+@login_required
+def api_classes_list():
+    """API để lấy danh sách tất cả các lớp"""
+    try:
+        classes = get_all_classes()
+        return jsonify({"classes": classes}), 200
+    except Exception as e:
+        return jsonify({"classes": [], "error": str(e)}), 500
+
+# ============================================================
 # STARTUP
 # ============================================================
+# Ensure directories exist
+os.makedirs(DS_DIR, exist_ok=True)
+os.makedirs(BASE_DIR, exist_ok=True)
+
 # Load API keys when app starts
 print("📡 Loading API keys...")
 load_api_keys()

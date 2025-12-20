@@ -1,323 +1,277 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thêm dữ liệu khuôn mặt - {{ class_name }}</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap">
-    <style>
-        * {
-            box-sizing: border-box;
-        }
+{% extends "base.html" %}
 
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            background: #f4f7f9;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: clamp(15px, 3vw, 20px);
-        }
+{% block title %}Thêm học sinh - {{ class_name }}{% endblock %}
+{% block page_title %}Thêm học sinh{% endblock %}
 
-        .container {
-            background: #fff;
-            padding: clamp(25px, 5vw, 30px);
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            max-width: 600px;
-            width: 100%;
-        }
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="text-center">
+        <div class="inline-block p-4 bg-gradient-to-br from-green-100 to-emerald-100 rounded-full mb-4">
+            <i class="fas fa-user-plus text-5xl text-green-600"></i>
+        </div>
+        <h2 class="text-3xl font-bold text-slate-800">Thêm dữ liệu khuôn mặt</h2>
+        <p class="text-slate-500 mt-2">Lớp {{ class_name }}</p>
+    </div>
 
-        h2 {
-            color: #003366;
-            text-align: center;
-            margin-bottom: 20px;
-            font-size: clamp(20px, 4vw, 24px);
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            font-weight: 600;
-            display: block;
-            margin-bottom: 8px;
-            font-size: clamp(13px, 2vw, 14px);
-            color: #333;
-        }
-
-        select,
-        input[type=text] {
-            width: 100%;
-            padding: clamp(10px, 2vw, 12px);
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: clamp(13px, 2vw, 14px);
-            font-family: inherit;
-            transition: border-color 0.3s ease;
-        }
-
-        select:focus,
-        input[type=text]:focus {
-            outline: none;
-            border-color: #003366;
-        }
-
-        /* Custom select styling */
-        select {
-            background: white;
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 12px center;
-            padding-right: 36px;
-        }
-
-        select option {
-            padding: 8px;
-        }
-
-        /* Student info display */
-        .student-info {
-            display: none;
-            padding: 12px;
-            background: #f0f8ff;
-            border-left: 4px solid #003366;
-            border-radius: 4px;
-            margin-top: 10px;
-        }
-
-        .student-info.show {
-            display: block;
-        }
-
-        .student-info p {
-            margin: 0;
-            font-size: clamp(12px, 1.8vw, 13px);
-            color: #555;
-        }
-
-        .student-info strong {
-            color: #003366;
-        }
-
-        /* File input */
-        .file-input-wrapper {
-            position: relative;
-            margin-top: 8px;
-        }
-
-        input[type=file] {
-            width: 100%;
-            padding: clamp(10px, 2vw, 12px);
-            border: 2px dashed #ccc;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: clamp(12px, 1.8vw, 13px);
-        }
-
-        input[type=file]:hover {
-            border-color: #003366;
-            background: #f8f9fa;
-        }
-
-        input[type=file]::file-selector-button {
-            padding: 8px 16px;
-            background: #003366;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 600;
-            margin-right: 10px;
-            font-size: clamp(11px, 1.6vw, 12px);
-        }
-
-        input[type=file]::file-selector-button:hover {
-            background: #0056b3;
-        }
-
-        button {
-            width: 100%;
-            padding: clamp(12px, 2.5vw, 14px);
-            background: #003366;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: clamp(14px, 2.2vw, 16px);
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-
-        button:hover:not(:disabled) {
-            background: #0056b3;
-            transform: translateY(-1px);
-        }
-
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-
-        button:active:not(:disabled) {
-            transform: scale(0.98);
-        }
-
-        .back-link {
-            display: block;
-            text-align: center;
-            margin-top: 15px;
-            color: #004085;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: clamp(13px, 2vw, 14px);
-        }
-
-        .back-link:hover {
-            text-decoration: underline;
-        }
-
-        .helper-text {
-            font-size: clamp(11px, 1.6vw, 12px);
-            color: #666;
-            margin-top: 6px;
-        }
-
-        .error-message {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 12px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-            font-size: clamp(12px, 1.8vw, 13px);
-            color: #856404;
-        }
-
-        /* Mobile optimization */
-        @media (max-width: 480px) {
-            body {
-                padding: 10px;
-            }
-
-            .container {
-                padding: 20px;
-            }
-
-            h2 {
-                font-size: 18px;
-                margin-bottom: 15px;
-            }
-        }
-
-        @media (max-width: 360px) {
-            .container {
-                padding: 15px;
-            }
-
-            h2 {
-                font-size: 16px;
-            }
-        }
-    </style>
-</head>
-<body>
-<div class="container">
-    <h2>Thêm dữ liệu khuôn mặt - {{ class_name }}</h2>
-    
     {% if students|length == 0 %}
-    <div class="error-message">
-        ⚠️ Chưa có danh sách học sinh. Vui lòng thêm file DS_{{ class_name }}.xlsx vào thư mục classes/DS/
+    <!-- No Students Warning -->
+    <div class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-xl p-6">
+        <div class="flex items-start gap-4">
+            <div class="bg-amber-500 p-3 rounded-lg">
+                <i class="fas fa-exclamation-triangle text-white text-2xl"></i>
+            </div>
+            <div>
+                <h3 class="font-bold text-amber-900 mb-2">Chưa có danh sách học sinh</h3>
+                <p class="text-amber-800 text-sm">
+                    Vui lòng tải lên file <code class="bg-amber-100 px-2 py-0.5 rounded">DS_{{ class_name }}.xlsx</code> 
+                    vào thư mục classes/DS/
+                </p>
+                <a href="{{ url_for('manage_classes') }}" 
+                   class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-amber-700 hover:text-amber-900">
+                    <i class="fas fa-arrow-right"></i>
+                    Quản lý danh sách lớp
+                </a>
+            </div>
+        </div>
     </div>
     {% else %}
     
-    <form method="POST" enctype="multipart/form-data" id="addStudentForm">
-        <div class="form-group">
-            <label for="student_select">👤 Chọn học sinh:</label>
-            <select id="student_select" name="student_id" required>
-                <option value="">-- Chọn học sinh --</option>
-                {% for student in students %}
-                <option value="{{ student.id }}" data-name="{{ student.name }}">
-                    {{ student.id }} - {{ student.name }}
-                </option>
-                {% endfor %}
-            </select>
+    <!-- Main Form -->
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+        <div class="p-6 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-200">
+            <h3 class="text-xl font-bold text-green-900 flex items-center gap-2">
+                <i class="fas fa-camera text-green-600"></i>
+                Thông tin học sinh
+            </h3>
+        </div>
+        
+        <form method="POST" enctype="multipart/form-data" id="addStudentForm" class="p-8 space-y-6">
+            <!-- Student Selection -->
+            <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-3">
+                    <i class="fas fa-user text-blue-600 mr-2"></i>
+                    Chọn học sinh *
+                </label>
+                <select 
+                    id="student_select" 
+                    name="student_id" 
+                    required
+                    class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none text-slate-800"
+                >
+                    <option value="">-- Chọn học sinh --</option>
+                    {% for student in students %}
+                    <option value="{{ student.id }}" data-name="{{ student.name }}">
+                        {{ student.id }} - {{ student.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+                
+                <!-- Student Info Display -->
+                <div id="studentInfo" class="hidden mt-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-xl p-4">
+                    <div class="flex items-center gap-4">
+                        <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center shadow-lg">
+                            <span class="text-white font-bold text-xl" id="displayInitial">?</span>
+                        </div>
+                        <div>
+                            <p class="text-sm text-blue-600 font-medium">Đã chọn</p>
+                            <p class="font-bold text-blue-900"><span id="displayId"></span> - <span id="displayName"></span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
             
-            <div id="studentInfo" class="student-info">
-                <p><strong>Mã:</strong> <span id="displayId"></span></p>
-                <p><strong>Tên:</strong> <span id="displayName"></span></p>
+            <!-- Image Upload -->
+            <div>
+                <label class="block text-sm font-semibold text-slate-700 mb-3">
+                    <i class="fas fa-images text-green-600 mr-2"></i>
+                    Ảnh khuôn mặt *
+                </label>
+                
+                <!-- Drop Zone -->
+                <div class="relative">
+                    <input 
+                        type="file" 
+                        id="images" 
+                        name="images" 
+                        multiple 
+                        accept="image/*" 
+                        required
+                        class="hidden"
+                    >
+                    <label 
+                        for="images"
+                        id="dropZone"
+                        class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer bg-slate-50 hover:bg-slate-100 transition-all duration-200"
+                    >
+                        <div class="text-center">
+                            <i class="fas fa-cloud-upload-alt text-5xl text-slate-400 mb-3"></i>
+                            <p class="text-slate-700 font-semibold">Kéo thả ảnh vào đây</p>
+                            <p class="text-slate-500 text-sm mt-1">hoặc nhấn để chọn file</p>
+                        </div>
+                    </label>
+                </div>
+                
+                <!-- File Preview -->
+                <div id="filePreview" class="hidden mt-4 grid grid-cols-3 gap-4">
+                    <!-- Preview will be inserted here -->
+                </div>
+                
+                <p class="text-sm text-slate-600 mt-3 flex items-start gap-2">
+                    <i class="fas fa-info-circle text-blue-500 mt-0.5"></i>
+                    <span id="helperText">Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác nhận diện</span>
+                </p>
             </div>
-        </div>
-        
-        <div class="form-group">
-            <label for="images">📸 Ảnh khuôn mặt:</label>
-            <div class="file-input-wrapper">
-                <input type="file" id="images" name="images" multiple accept="image/*" required>
+            
+            <!-- Submit Button -->
+            <div class="flex gap-3 pt-4">
+                <button 
+                    type="submit" 
+                    id="submitBtn"
+                    disabled
+                    class="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-slate-300 disabled:to-slate-400 text-white py-4 rounded-xl font-bold text-lg transition-all duration-200 shadow-lg hover:shadow-xl disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                    <i class="fas fa-check-circle"></i>
+                    Tải lên và Mã hóa
+                </button>
+                <a 
+                    href="{{ url_for('class_home', class_name=class_name) }}"
+                    class="px-6 bg-slate-200 hover:bg-slate-300 text-slate-700 py-4 rounded-xl font-bold transition-all duration-200 flex items-center gap-2"
+                >
+                    <i class="fas fa-times"></i>
+                    Hủy
+                </a>
             </div>
-            <p class="helper-text" id="helperText">💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác</p>
-        </div>
-        
-        <button type="submit" id="submitBtn">✓ Tải lên và Mã hóa</button>
-    </form>
-    
-    <a href="{{ url_for('class_home', class_name=class_name) }}" class="back-link">← Quay lại</a>
+        </form>
+    </div>
+
+    <!-- Tips Card -->
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200">
+        <h4 class="font-bold text-blue-900 mb-3 flex items-center gap-2">
+            <i class="fas fa-lightbulb text-blue-600"></i>
+            Mẹo để tăng độ chính xác
+        </h4>
+        <ul class="space-y-2 text-sm text-blue-800">
+            <li class="flex items-start gap-2">
+                <i class="fas fa-check text-blue-600 mt-1"></i>
+                <span>Chụp ảnh trong điều kiện ánh sáng tốt</span>
+            </li>
+            <li class="flex items-start gap-2">
+                <i class="fas fa-check text-blue-600 mt-1"></i>
+                <span>Khuôn mặt nhìn thẳng vào camera, không bị che khuất</span>
+            </li>
+            <li class="flex items-start gap-2">
+                <i class="fas fa-check text-blue-600 mt-1"></i>
+                <span>Chụp từ nhiều góc độ khác nhau (thẳng, nghiêng trái/phải)</span>
+            </li>
+            <li class="flex items-start gap-2">
+                <i class="fas fa-check text-blue-600 mt-1"></i>
+                <span>Tránh đeo kính râm hoặc khẩu trang khi chụp</span>
+            </li>
+        </ul>
+    </div>
     
     {% endif %}
 </div>
 
 <script>
-    const studentSelect = document.getElementById('student_select');
-    const studentInfo = document.getElementById('studentInfo');
-    const displayId = document.getElementById('displayId');
-    const displayName = document.getElementById('displayName');
-    const fileInput = document.getElementById('images');
-    const helperText = document.getElementById('helperText');
-    const submitBtn = document.getElementById('submitBtn');
+const studentSelect = document.getElementById('student_select');
+const studentInfo = document.getElementById('studentInfo');
+const displayId = document.getElementById('displayId');
+const displayName = document.getElementById('displayName');
+const displayInitial = document.getElementById('displayInitial');
+const fileInput = document.getElementById('images');
+const dropZone = document.getElementById('dropZone');
+const filePreview = document.getElementById('filePreview');
+const helperText = document.getElementById('helperText');
+const submitBtn = document.getElementById('submitBtn');
+
+// Student selection
+studentSelect?.addEventListener('change', function() {
+    const selectedOption = this.options[this.selectedIndex];
     
-    // Show student info when selected
-    studentSelect.addEventListener('change', function() {
-        const selectedOption = this.options[this.selectedIndex];
+    if (this.value) {
+        const studentId = this.value;
+        const studentName = selectedOption.dataset.name;
         
-        if (this.value) {
-            const studentId = this.value;
-            const studentName = selectedOption.dataset.name;
-            
-            displayId.textContent = studentId;
-            displayName.textContent = studentName;
-            studentInfo.classList.add('show');
-        } else {
-            studentInfo.classList.remove('show');
-        }
-        
-        checkFormValidity();
-    });
-    
-    // Show selected file count
-    fileInput.addEventListener('change', function() {
-        const fileCount = this.files.length;
-        if (fileCount > 0) {
-            helperText.textContent = `✓ Đã chọn ${fileCount} ảnh`;
-            helperText.style.color = '#28a745';
-        } else {
-            helperText.textContent = '💡 Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác';
-            helperText.style.color = '#666';
-        }
-        
-        checkFormValidity();
-    });
-    
-    function checkFormValidity() {
-        const hasStudent = studentSelect.value !== '';
-        const hasFiles = fileInput.files.length > 0;
-        submitBtn.disabled = !(hasStudent && hasFiles);
+        displayId.textContent = studentId;
+        displayName.textContent = studentName;
+        displayInitial.textContent = studentName[0].toUpperCase();
+        studentInfo.classList.remove('hidden');
+    } else {
+        studentInfo.classList.add('hidden');
     }
     
-    // Initial check
     checkFormValidity();
+});
+
+// File selection
+fileInput?.addEventListener('change', function(e) {
+    handleFiles(this.files);
+});
+
+// Drag and drop
+dropZone?.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    this.classList.add('border-blue-500', 'bg-blue-50');
+});
+
+dropZone?.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    this.classList.remove('border-blue-500', 'bg-blue-50');
+});
+
+dropZone?.addEventListener('drop', function(e) {
+    e.preventDefault();
+    this.classList.remove('border-blue-500', 'bg-blue-50');
+    
+    const dt = e.dataTransfer;
+    fileInput.files = dt.files;
+    handleFiles(dt.files);
+});
+
+function handleFiles(files) {
+    if (files.length > 0) {
+        filePreview.classList.remove('hidden');
+        filePreview.innerHTML = '';
+        
+        Array.from(files).forEach((file, index) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const div = document.createElement('div');
+                div.className = 'relative group';
+                div.innerHTML = `
+                    <img src="${e.target.result}" class="w-full h-32 object-cover rounded-lg border-2 border-slate-200 group-hover:border-blue-500 transition-all">
+                    <div class="absolute top-2 right-2 bg-blue-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        ${index + 1}
+                    </div>
+                `;
+                filePreview.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        helperText.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> Đã chọn ${files.length} ảnh`;
+        helperText.className = 'text-sm text-green-600 mt-3 flex items-center gap-2 font-semibold';
+    } else {
+        filePreview.classList.add('hidden');
+        helperText.innerHTML = '<i class="fas fa-info-circle text-blue-500 mt-0.5"></i> Tải lên 3-5 ảnh từ nhiều góc độ để tăng độ chính xác nhận diện';
+        helperText.className = 'text-sm text-slate-600 mt-3 flex items-start gap-2';
+    }
+    
+    checkFormValidity();
+}
+
+function checkFormValidity() {
+    const hasStudent = studentSelect?.value !== '';
+    const hasFiles = fileInput?.files.length > 0;
+    
+    if (submitBtn) {
+        submitBtn.disabled = !(hasStudent && hasFiles);
+    }
+}
+
+// Initial check
+checkFormValidity();
 </script>
-</body>
-</html>
+{% endblock %}
