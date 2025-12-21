@@ -11,8 +11,9 @@ import sys
 import uuid
 from io import BytesIO
 
-DS_DIR = "classes/DS"
-BASE_DIR = "classes"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.environ.get("BASE_DIR") or os.path.join(PROJECT_ROOT, "classes")
+DS_DIR = os.environ.get("DS_DIR") or os.path.join(BASE_DIR, "DS")
 SYSTEM_DIR = os.environ.get("SYSTEM_DIR") or os.path.join(BASE_DIR, "_system")
 TOLERANCE, DETECTION_MODEL = 0.5, "hog"
 
@@ -111,32 +112,42 @@ def get_all_classes():
     global CLASSES_CACHE
     classes = []
     try:
-        try:
-            ds_mtime = os.path.getmtime(DS_DIR) if os.path.exists(DS_DIR) else None
-        except OSError:
-            ds_mtime = None
-        if CLASSES_CACHE["value"] is not None and CLASSES_CACHE["mtime"] == ds_mtime:
+        ds_candidates = [DS_DIR, BASE_DIR]
+        sig_parts = []
+        for p in ds_candidates:
+            try:
+                sig_parts.append(str(os.path.getmtime(p)) if os.path.exists(p) else "None")
+            except OSError:
+                sig_parts.append("None")
+        signature = "|".join(sig_parts)
+        if CLASSES_CACHE["value"] is not None and CLASSES_CACHE["mtime"] == signature:
             return CLASSES_CACHE["value"]
 
-        print(f"📂 Checking directory: {DS_DIR}")
-        if not os.path.exists(DS_DIR):
-            print(f"⚠️ Directory not found: {DS_DIR}, creating...")
-            os.makedirs(DS_DIR, exist_ok=True)
-            CLASSES_CACHE = {"value": [], "mtime": ds_mtime}
-            return []
-        
-        files = os.listdir(DS_DIR)
-        print(f"📄 Files in {DS_DIR}: {files}")
-        
-        for filename in files:
-            if filename.startswith('DS_') and filename.endswith('.xlsx'):
-                class_name = filename[3:-5]  # Remove 'DS_' and '.xlsx'
-                classes.append(class_name)
-                print(f"✅ Found class: {class_name}")
+        found_any = False
+        for directory in ds_candidates:
+            print(f"📂 Checking directory: {directory}")
+            if not os.path.exists(directory):
+                if directory == DS_DIR:
+                    print(f"⚠️ Directory not found: {directory}, creating...")
+                    os.makedirs(directory, exist_ok=True)
+                continue
+
+            files = os.listdir(directory)
+            print(f"📄 Files in {directory}: {files}")
+
+            for filename in files:
+                if filename.startswith('DS_') and filename.lower().endswith('.xlsx'):
+                    class_name = filename[3:-5]
+                    classes.append(class_name)
+                    found_any = True
+                    print(f"✅ Found class: {class_name}")
+
+            if found_any:
+                break
         
         classes = sorted(classes)
         print(f"📊 Total classes found: {len(classes)}")
-        CLASSES_CACHE = {"value": classes, "mtime": ds_mtime}
+        CLASSES_CACHE = {"value": classes, "mtime": signature}
         return classes
     except Exception as e:
         print(f"❌ Error in get_all_classes: {e}")
@@ -255,6 +266,8 @@ def load_api_keys():
             c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
             VALID_API_KEYS = {}
             for row in c.fetchall():
+                if not validate_class_exists(row[1]):
+                    continue
                 VALID_API_KEYS[row[0]] = {
                     'class_name': row[1],
                     'device_name': row[2],
@@ -268,10 +281,19 @@ def load_api_keys():
 
 def verify_api_key(api_key, class_name):
     """Verify API key và class name"""
+    if not validate_class_exists(class_name):
+        return False
     if api_key in VALID_API_KEYS:
         if VALID_API_KEYS[api_key]['class_name'] == class_name:
             return True
     return False
+
+@app.context_processor
+def inject_globals():
+    return {
+        "mqtt_connected": mqtt_connected,
+        "max_upload_mb": MAX_UPLOAD_MB,
+    }
 
 # ============================================================
 # AUTHENTICATION ROUTES
@@ -357,6 +379,27 @@ def manage_classes():
     classes = get_all_classes()
     print(f"🔍 manage_classes route - Found {len(classes)} classes: {classes}")
     return render_template('manage_classes.html', classes=classes)
+
+@app.route('/classes/template')
+@login_required
+def download_class_template():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Danh sách"
+    ws.append(["Mã học sinh", "Tên học sinh"])
+    ws.append(["001", "Nguyễn Văn A"])
+    ws.append(["002", "Trần Thị B"])
+    ws.append(["003", "Lê Văn C"])
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return send_file(
+        bio,
+        as_attachment=True,
+        download_name="DS_Mau.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 @app.route('/classes/upload', methods=['POST'])
 @login_required

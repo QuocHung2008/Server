@@ -44,7 +44,7 @@
                     <li><i class="fas fa-check text-blue-600 mr-2"></i>Cột 2: Tên học sinh</li>
                     <li><i class="fas fa-check text-blue-600 mr-2"></i>Dòng 1 là tiêu đề, dữ liệu bắt đầu từ dòng 2</li>
                 </ul>
-                <a href="#" onclick="downloadTemplate()" class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-blue-700 hover:text-blue-900">
+                <a href="{{ url_for('download_class_template') }}" class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-blue-700 hover:text-blue-900">
                     <i class="fas fa-download"></i>
                     Tải file mẫu
                 </a>
@@ -137,6 +137,8 @@
     </div>
 </div>
 
+<div id="classes-data" data-classes='{{ classes|tojson }}' hidden></div>
+
 <script>
 function handleFileSelect(event) {
     const file = event.target.files[0];
@@ -153,28 +155,21 @@ function handleFileSelect(event) {
     }
 }
 
-function downloadTemplate() {
-    // Create sample Excel data
-    const csv = 'Mã học sinh,Tên học sinh\n001,Nguyễn Văn A\n002,Trần Thị B\n003,Lê Văn C';
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'DS_Mau.csv';
-    link.click();
-}
-
-// Load student counts for each class
 window.addEventListener('DOMContentLoaded', () => {
-    {% for class_name in classes %}
-    fetch('/api/class/{{ class_name }}/count')
-        .then(r => r.json())
-        .then(data => {
-            document.getElementById('count-{{ class_name }}').textContent = data.count || '0';
-        })
-        .catch(() => {
-            document.getElementById('count-{{ class_name }}').textContent = '?';
-        });
-    {% endfor %}
+    const dataEl = document.getElementById('classes-data');
+    const classNames = dataEl ? JSON.parse(dataEl.dataset.classes || '[]') : [];
+    for (const className of classNames) {
+        fetch(`/api/class/${encodeURIComponent(className)}/count`)
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById(`count-${className}`);
+                if (el) el.textContent = data.count || '0';
+            })
+            .catch(() => {
+                const el = document.getElementById(`count-${className}`);
+                if (el) el.textContent = '?';
+            });
+    }
 });
 </script>
 {% endblock %}
