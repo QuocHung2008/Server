@@ -1,13 +1,10 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, session, flash
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from encode_known_faces import build_encodings_for_class
 from typing import Dict
 from openpyxl import load_workbook, Workbook
-import os, sqlite3, pickle, cv2, numpy as np, face_recognition
-import datetime, threading, time, json, secrets
-import paho.mqtt.client as mqtt
+import os, sqlite3, pickle, datetime, threading, time, json, secrets
 import base64
 import signal
 import sys
@@ -31,12 +28,34 @@ MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
 
-# API Key cho ESP32
+# Global variables
 VALID_API_KEYS = {}
-
 LOCKS = {}
 ENCODINGS_CACHE = {}
 image_buffer = {}
+mqtt_client = None
+mqtt_connected = False
+cv2 = None
+np = None
+face_recognition = None
+
+def lazy_load_cv2():
+    """Lazy load OpenCV"""
+    global cv2, np
+    if cv2 is None:
+        import cv2 as cv2_module
+        import numpy as np_module
+        cv2 = cv2_module
+        np = np_module
+    return cv2, np
+
+def lazy_load_face_recognition():
+    """Lazy load face_recognition"""
+    global face_recognition
+    if face_recognition is None:
+        import face_recognition as fr_module
+        face_recognition = fr_module
+    return face_recognition
 
 # ============================================================
 # HELPER FUNCTIONS - CLASS MANAGEMENT
@@ -44,12 +63,27 @@ image_buffer = {}
 def get_all_classes():
     """Lấy danh sách tất cả các lớp từ file DS_*.xlsx"""
     classes = []
-    if os.path.exists(DS_DIR):
-        for filename in os.listdir(DS_DIR):
+    try:
+        print(f"📂 Checking directory: {DS_DIR}")
+        if not os.path.exists(DS_DIR):
+            print(f"⚠️ Directory not found: {DS_DIR}, creating...")
+            os.makedirs(DS_DIR, exist_ok=True)
+            return []
+        
+        files = os.listdir(DS_DIR)
+        print(f"📄 Files in {DS_DIR}: {files}")
+        
+        for filename in files:
             if filename.startswith('DS_') and filename.endswith('.xlsx'):
                 class_name = filename[3:-5]  # Remove 'DS_' and '.xlsx'
                 classes.append(class_name)
-    return sorted(classes)
+                print(f"✅ Found class: {class_name}")
+        
+        print(f"📊 Total classes found: {len(classes)}")
+        return sorted(classes)
+    except Exception as e:
+        print(f"❌ Error in get_all_classes: {e}")
+        return []
 
 def ensure_class_structure(class_name):
     """Đảm bảo cấu trúc thư mục cho lớp"""
@@ -57,7 +91,6 @@ def ensure_class_structure(class_name):
     known_faces_dir = os.path.join(class_dir, "known_faces")
     os.makedirs(known_faces_dir, exist_ok=True)
     
-    # Create attendance database
     db_path = os.path.join(class_dir, "attendance.db")
     if not os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
@@ -76,6 +109,41 @@ def ensure_class_structure(class_name):
         LOCKS[class_name] = threading.Lock()
     
     return class_dir
+
+def validate_class_exists(class_name):
+    """Kiểm tra lớp có tồn tại trong danh sách hay không"""
+    return class_name in get_all_classes()
+
+def load_student_list(class_name: str) -> Dict[str, str]:
+    """Load danh sách học sinh từ Excel"""
+    file_path = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
+    if not os.path.exists(file_path):
+        print(f"⚠️ Student list not found: {file_path}")
+        return {}
+    try:
+        wb = load_workbook(file_path, read_only=True)
+        ws = wb.active
+        students = {}
+        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+            if row[0] and row[1]:
+                students[str(row[0]).strip()] = str(row[1]).strip()
+        wb.close()
+        print(f"✅ Loaded {len(students)} students from {class_name}")
+        return students
+    except Exception as e:
+        print(f"❌ Error reading {file_path}: {e}")
+        return {}
+
+def get_student_name(class_name: str, student_id: str) -> str:
+    students = load_student_list(class_name)
+    return students.get(str(student_id), "Unknown")
+
+def get_status_by_time(now):
+    morning_limit = now.replace(hour=6, minute=45, second=0, microsecond=0)
+    afternoon_limit = now.replace(hour=13, minute=15, second=0, microsecond=0)
+    if now.hour < 12:
+        return "Trễ" if now > morning_limit else "Có mặt"
+    return "Trễ" if now > afternoon_limit else "Có mặt"
 
 # ============================================================
 # USER MODEL
@@ -132,10 +200,6 @@ def verify_api_key(api_key, class_name):
         if VALID_API_KEYS[api_key]['class_name'] == class_name:
             return True
     return False
-
-def validate_class_exists(class_name):
-    """Kiểm tra lớp có tồn tại trong danh sách hay không"""
-    return class_name in get_all_classes()
 
 # ============================================================
 # AUTHENTICATION ROUTES
@@ -215,6 +279,7 @@ def change_password():
 def manage_classes():
     """Trang quản lý danh sách lớp"""
     classes = get_all_classes()
+    print(f"🔍 manage_classes route - Found {len(classes)} classes: {classes}")
     return render_template('manage_classes.html', classes=classes)
 
 @app.route('/classes/upload', methods=['POST'])
@@ -236,47 +301,41 @@ def upload_class_list():
         return redirect(url_for('manage_classes'))
     
     try:
-        # Đảm bảo thư mục DS tồn tại
         os.makedirs(DS_DIR, exist_ok=True)
-        
-        # Lưu file
         filename = secure_filename(file.filename)
         
-        # Đảm bảo tên file có format DS_ClassName.xlsx
         if not filename.startswith('DS_'):
             flash('Tên file phải có định dạng: DS_TenLop.xlsx (ví dụ: DS_12T1.xlsx)', 'error')
             return redirect(url_for('manage_classes'))
         
         filepath = os.path.join(DS_DIR, filename)
         file.save(filepath)
+        print(f"💾 Saved file: {filepath}")
         
-        # Validate file Excel
         try:
             wb = load_workbook(filepath, read_only=True)
             ws = wb.active
             
-            # Kiểm tra header
             header = [cell.value for cell in ws[1]]
             if len(header) < 2:
                 os.remove(filepath)
                 flash('File Excel phải có ít nhất 2 cột: Mã học sinh và Tên học sinh', 'error')
                 return redirect(url_for('manage_classes'))
             
-            # Đếm số học sinh
             student_count = sum(1 for row in ws.iter_rows(min_row=2, max_col=2, values_only=True) if row[0] and row[1])
-            
             wb.close()
             
-            # Tạo cấu trúc thư mục cho lớp
-            class_name = filename[3:-5]  # Remove 'DS_' and '.xlsx'
+            class_name = filename[3:-5]
             ensure_class_structure(class_name)
             
             flash(f'Tải lên thành công! Lớp {class_name} có {student_count} học sinh', 'success')
+            print(f"✅ Class {class_name} uploaded with {student_count} students")
             
         except Exception as e:
             if os.path.exists(filepath):
                 os.remove(filepath)
             flash(f'File Excel không hợp lệ: {str(e)}', 'error')
+            print(f"❌ Excel validation error: {e}")
             return redirect(url_for('manage_classes'))
         
     except Exception as e:
@@ -290,12 +349,11 @@ def upload_class_list():
 def delete_class(class_name):
     """Xóa lớp học"""
     try:
-        # Xóa file DS
         ds_file = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
         if os.path.exists(ds_file):
             os.remove(ds_file)
+            print(f"🗑️ Deleted file: {ds_file}")
         
-        # Xóa các API key liên quan
         try:
             conn = sqlite3.connect('api_keys.db')
             c = conn.cursor()
@@ -305,7 +363,7 @@ def delete_class(class_name):
             conn.close()
             
             if deleted_count > 0:
-                load_api_keys()  # Reload API keys
+                load_api_keys()
                 print(f"🗑️ Deleted {deleted_count} API keys for class {class_name}")
         except Exception as e:
             print(f"⚠️ Error deleting API keys: {e}")
@@ -324,7 +382,6 @@ def delete_class(class_name):
 @login_required
 def manage_api_keys():
     try:
-        # Lấy danh sách lớp có sẵn
         available_classes = get_all_classes()
         
         conn = sqlite3.connect('api_keys.db')
@@ -348,7 +405,6 @@ def create_api_key():
         flash('Vui lòng chọn lớp', 'error')
         return redirect(url_for('manage_api_keys'))
     
-    # Kiểm tra lớp có tồn tại không
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại trong hệ thống', 'error')
         return redirect(url_for('manage_api_keys'))
@@ -388,54 +444,21 @@ def delete_api_key(key_id):
     
     return redirect(url_for('manage_api_keys'))
 
-@app.route("/health")
-def health():
-    """Health check endpoint for Railway/Docker"""
-    return jsonify({"status": "healthy"}), 200
-
 # ============================================================
-# HELPER FUNCTIONS
+# FACE RECOGNITION FUNCTIONS
 # ============================================================
-def load_student_list(class_name: str) -> Dict[str, str]:
-    file_path = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
-    if not os.path.exists(file_path):
-        return {}
-    try:
-        wb = load_workbook(file_path, read_only=True)
-        ws = wb.active
-        students = {}
-        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
-            if row[0] and row[1]:
-                students[str(row[0]).strip()] = str(row[1]).strip()
-        wb.close()
-        return students
-    except Exception as e:
-        print(f"❌ Error reading {file_path}: {e}")
-        return {}
-
-def get_student_name(class_name: str, student_id: str) -> str:
-    students = load_student_list(class_name)
-    return students.get(str(student_id), "Unknown")
-
-def get_status_by_time(now):
-    morning_limit = now.replace(hour=6, minute=45, second=0, microsecond=0)
-    afternoon_limit = now.replace(hour=13, minute=15, second=0, microsecond=0)
-    if now.hour < 12:
-        return "Trễ" if now > morning_limit else "Có mặt"
-    return "Trễ" if now > afternoon_limit else "Có mặt"
-
-def ensure_class(class_name):
-    return ensure_class_structure(class_name)
-
 def get_encodings_data(class_name):
     if class_name in ENCODINGS_CACHE:
         return ENCODINGS_CACHE[class_name]
+    
     enc_path = os.path.join(BASE_DIR, class_name, "encodings.pkl")
     if not os.path.exists(enc_path):
+        from encode_known_faces import build_encodings_for_class
         data = build_encodings_for_class(os.path.join(BASE_DIR, class_name))
     else:
         with open(enc_path, "rb") as f:
             data = pickle.load(f)
+    
     ENCODINGS_CACHE[class_name] = data
     return data
 
@@ -467,121 +490,138 @@ def record_attendance(class_name, student_id):
 
 def recognize_face_from_image(class_name: str, img_bytes: bytes):
     start_time = time.time()
-    ensure_class(class_name)
+    
+    cv2_lib, np_lib = lazy_load_cv2()
+    fr_lib = lazy_load_face_recognition()
+    
+    ensure_class_structure(class_name)
     data = get_encodings_data(class_name)
-    img_bgr = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    
+    img_bgr = cv2_lib.imdecode(np_lib.frombuffer(img_bytes, np_lib.uint8), cv2_lib.IMREAD_COLOR)
     if img_bgr is None:
         print(f"[{class_name}] ❌ Invalid image")
         return "Unknown"
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    locs = face_recognition.face_locations(img_rgb, model=DETECTION_MODEL)
+    
+    img_rgb = cv2_lib.cvtColor(img_bgr, cv2_lib.COLOR_BGR2RGB)
+    locs = fr_lib.face_locations(img_rgb, model=DETECTION_MODEL)
+    
     if len(locs) == 0:
         print(f"[{class_name}] ❌ No face detected | {time.time() - start_time:.3f}s")
         return "Unknown"
-    encs = face_recognition.face_encodings(img_rgb, locs)
+    
+    encs = fr_lib.face_encodings(img_rgb, locs)
     best_face_idx = 0
+    
     if len(locs) > 1:
         areas = [(loc[2] - loc[0]) * (loc[1] - loc[3]) for loc in locs]
-        best_face_idx = np.argmax(areas)
+        best_face_idx = np_lib.argmax(areas)
+    
     enc = encs[best_face_idx]
-    matches = face_recognition.compare_faces(data["encodings"], enc, TOLERANCE)
-    dist = face_recognition.face_distance(data["encodings"], enc)
+    matches = fr_lib.compare_faces(data["encodings"], enc, TOLERANCE)
+    dist = fr_lib.face_distance(data["encodings"], enc)
+    
     recognized_name = "Unknown"
     if len(dist) > 0:
-        best = np.argmin(dist)
+        best = np_lib.argmin(dist)
         if matches[best]:
             student_id = data["names"][best]
             recognized_name = get_student_name(class_name, student_id)
             threading.Thread(target=record_attendance, args=(class_name, student_id), daemon=True).start()
+    
     elapsed = time.time() - start_time
     print(f"[{class_name}] ✅ {recognized_name} | {elapsed:.3f}s")
     return recognized_name
 
 # ============================================================
-# MQTT CALLBACKS
+# MQTT SETUP
 # ============================================================
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        print("✅ Connected to MQTT Broker")
-        client.subscribe("esp32cam/+/image/#")
-        print("📡 Subscribed: esp32cam/+/image/#")
-    else:
-        print(f"❌ MQTT connection failed, rc={rc}")
-
-def on_message(client, userdata, msg):
-    topic = msg.topic
-    payload = msg.payload
-    parts = topic.split("/")
-    if len(parts) < 4:
-        return
-    class_name = parts[1]
-    message_type = parts[3]
+def init_mqtt():
+    """Initialize MQTT client lazily"""
+    global mqtt_client, mqtt_connected
     
-    if class_name not in image_buffer:
-        image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None}
-    
-    if message_type == "meta":
-        try:
-            meta = json.loads(payload.decode())
-            api_key = meta.get('api_key')
-            
-            if not api_key or not verify_api_key(api_key, meta.get('class', class_name)):
-                print(f"[{class_name}] ❌ Invalid API Key")
-                client.publish(f"esp32cam/{class_name}/result", 
-                             json.dumps({"name": "Unauthorized", "error": "Invalid API key"}))
-                return
-            
-            image_buffer[class_name]["meta"] = meta
-            image_buffer[class_name]["api_key"] = api_key
-            image_buffer[class_name]["chunks"] = {}
-            print(f"[{class_name}] 📥 Meta received: {meta['chunks']} chunks")
-        except Exception as e:
-            print(f"[{class_name}] ❌ Error parsing meta: {e}")
-    
-    elif message_type == "chunk":
-        if not image_buffer[class_name].get("api_key"):
-            print(f"[{class_name}] ❌ Chunk received before meta")
-            return
-        
-        chunk_id = int(parts[4])
-        image_buffer[class_name]["chunks"][chunk_id] = payload.decode()
-    
-    elif message_type == "done":
-        if not image_buffer[class_name].get("api_key"):
-            print(f"[{class_name}] ❌ Done received but no API key")
-            return
-        
-        print(f"[{class_name}] ⚙️ Processing...")
-        try:
-            chunks_dict = image_buffer[class_name]["chunks"]
-            sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
-            base64_image = "".join(sorted_chunks)
-            img_bytes = base64.b64decode(base64_image)
-            recognized_name = recognize_face_from_image(class_name, img_bytes)
-            result_topic = f"esp32cam/{class_name}/result"
-            result_json = json.dumps({"name": recognized_name})
-            client.publish(result_topic, result_json)
-            print(f"[{class_name}] 📤 Result sent: {recognized_name}")
-            del image_buffer[class_name]
-        except Exception as e:
-            print(f"[{class_name}] ❌ Processing error: {e}")
-            client.publish(f"esp32cam/{class_name}/result", 
-                         json.dumps({"name": "Unknown", "error": str(e)}))
-            if class_name in image_buffer:
-                del image_buffer[class_name]
-
-mqtt_client = mqtt.Client(client_id=f"railway-{uuid.uuid4().hex[:8]}")
-mqtt_client.on_connect = on_connect
-mqtt_client.on_message = on_message
-
-def start_mqtt():
     try:
-        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
-        mqtt_client.loop_forever()
+        import paho.mqtt.client as mqtt
+        
+        def on_connect(client, userdata, flags, rc):
+            global mqtt_connected
+            if rc == 0:
+                mqtt_connected = True
+                print("✅ Connected to MQTT Broker")
+                client.subscribe("esp32cam/+/image/#")
+                print("📡 Subscribed: esp32cam/+/image/#")
+            else:
+                mqtt_connected = False
+                print(f"❌ MQTT connection failed, rc={rc}")
+        
+        def on_message(client, userdata, msg):
+            topic = msg.topic
+            payload = msg.payload
+            parts = topic.split("/")
+            if len(parts) < 4:
+                return
+            class_name = parts[1]
+            message_type = parts[3]
+            
+            if class_name not in image_buffer:
+                image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None}
+            
+            if message_type == "meta":
+                try:
+                    meta = json.loads(payload.decode())
+                    api_key = meta.get('api_key')
+                    
+                    if not api_key or not verify_api_key(api_key, meta.get('class', class_name)):
+                        print(f"[{class_name}] ❌ Invalid API Key")
+                        client.publish(f"esp32cam/{class_name}/result", 
+                                     json.dumps({"name": "Unauthorized", "error": "Invalid API key"}))
+                        return
+                    
+                    image_buffer[class_name]["meta"] = meta
+                    image_buffer[class_name]["api_key"] = api_key
+                    image_buffer[class_name]["chunks"] = {}
+                    print(f"[{class_name}] 📥 Meta received: {meta['chunks']} chunks")
+                except Exception as e:
+                    print(f"[{class_name}] ❌ Error parsing meta: {e}")
+            
+            elif message_type == "chunk":
+                if not image_buffer[class_name].get("api_key"):
+                    return
+                chunk_id = int(parts[4])
+                image_buffer[class_name]["chunks"][chunk_id] = payload.decode()
+            
+            elif message_type == "done":
+                if not image_buffer[class_name].get("api_key"):
+                    return
+                
+                print(f"[{class_name}] ⚙️ Processing...")
+                try:
+                    chunks_dict = image_buffer[class_name]["chunks"]
+                    sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
+                    base64_image = "".join(sorted_chunks)
+                    img_bytes = base64.b64decode(base64_image)
+                    recognized_name = recognize_face_from_image(class_name, img_bytes)
+                    result_topic = f"esp32cam/{class_name}/result"
+                    result_json = json.dumps({"name": recognized_name})
+                    client.publish(result_topic, result_json)
+                    print(f"[{class_name}] 📤 Result sent: {recognized_name}")
+                    del image_buffer[class_name]
+                except Exception as e:
+                    print(f"[{class_name}] ❌ Processing error: {e}")
+                    client.publish(f"esp32cam/{class_name}/result", 
+                                 json.dumps({"name": "Unknown", "error": str(e)}))
+                    if class_name in image_buffer:
+                        del image_buffer[class_name]
+        
+        mqtt_client = mqtt.Client(client_id=f"railway-{uuid.uuid4().hex[:8]}")
+        mqtt_client.on_connect = on_connect
+        mqtt_client.on_message = on_message
+        mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
+        mqtt_client.loop_start()
+        print("📡 MQTT client initialized (async)")
+        
     except Exception as e:
-        print(f"❌ MQTT error: {e}")
-        time.sleep(5)
-        start_mqtt()
+        print(f"⚠️ MQTT initialization warning: {e}")
+        mqtt_connected = False
 
 # ============================================================
 # WEB ROUTES
@@ -590,19 +630,19 @@ def start_mqtt():
 @login_required
 def index():
     try:
+        print("🏠 Index route called")
         data = []
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        
-        # Lấy danh sách lớp từ file DS
         all_classes = get_all_classes()
+        print(f"📊 Found {len(all_classes)} classes: {all_classes}")
         
         for class_name in all_classes:
-            # Đảm bảo cấu trúc thư mục tồn tại
             class_dir = ensure_class_structure(class_name)
             db_path = os.path.join(class_dir, "attendance.db")
             
             students = load_student_list(class_name)
             if not students:
+                print(f"⚠️ No students found for {class_name}")
                 continue
             
             conn = sqlite3.connect(db_path)
@@ -620,21 +660,24 @@ def index():
                 "absent": len(absent_ids),
                 "absent_names": ", ".join(absent_names)
             })
+            print(f"✅ Processed class {class_name}: {len(present_ids)} present, {len(absent_ids)} absent")
         
+        print(f"📋 Rendering index with {len(data)} classes")
         return render_template('index.html', classes=data, user=current_user)
     except Exception as e:
         print(f"❌ Index error: {e}")
+        import traceback
+        traceback.print_exc()
         return render_template('index.html', classes=[], user=current_user)
 
 @app.route("/class/<class_name>/")
 @login_required
 def class_home(class_name):
-    # Validate class exists
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
         return redirect(url_for('index'))
     
-    class_dir = ensure_class(class_name)
+    class_dir = ensure_class_structure(class_name)
     students_dict = load_student_list(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
     conn = sqlite3.connect(db_path)
@@ -654,31 +697,38 @@ def class_home(class_name):
 @app.route("/class/<class_name>/add_student", methods=["GET", "POST"])
 @login_required
 def add_student(class_name):
-    # Validate class exists
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
         return redirect(url_for('index'))
     
-    class_dir = ensure_class(class_name)
+    class_dir = ensure_class_structure(class_name)
     if request.method == "POST":
         student_id = request.form.get("student_id", "").strip()
         files = request.files.getlist("images")
         if not student_id or not files:
             flash("Thiếu mã học sinh hoặc ảnh!", "error")
             return redirect(url_for('add_student', class_name=class_name))
+        
         students = load_student_list(class_name)
         if student_id not in students:
             flash(f"Mã học sinh {student_id} không có trong danh sách!", "error")
             return redirect(url_for('add_student', class_name=class_name))
+        
         person_dir = os.path.join(class_dir, "known_faces", student_id)
         os.makedirs(person_dir, exist_ok=True)
+        
         for file in files:
             fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
             file.save(os.path.join(person_dir, fname))
+        
+        # Import and build encodings
+        from encode_known_faces import build_encodings_for_class
         build_encodings_for_class(class_dir)
         reload_cache(class_name)
+        
         flash("Thêm học sinh thành công!", "success")
         return redirect(url_for("class_home", class_name=class_name))
+    
     students = load_student_list(class_name)
     student_list = [{"id": sid, "name": name} for sid, name in sorted(students.items())]
     return render_template('add_student.html', class_name=class_name, students=student_list, user=current_user)
@@ -686,12 +736,11 @@ def add_student(class_name):
 @app.route("/class/<class_name>/history")
 @login_required
 def attendance_history(class_name):
-    # Validate class exists
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
         return redirect(url_for('index'))
     
-    class_dir = ensure_class(class_name)
+    class_dir = ensure_class_structure(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -703,38 +752,41 @@ def attendance_history(class_name):
 @app.route("/class/<class_name>/export_excel")
 @login_required
 def export_excel_class(class_name):
-    # Validate class exists
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
         return redirect(url_for('index'))
     
     db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
     excel_path = f"{class_name}_attendance.xlsx"
+    
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute("SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
     rows = cur.fetchall()
     conn.close()
+    
     wb = Workbook()
     ws = wb.active
     ws.title = "Điểm danh"
     ws.append(["Mã học sinh", "Tên học sinh", "Ngày", "Giờ điểm danh", "Trạng thái"])
+    
     for row in rows:
         ws.append(row)
+    
     for column_cells in ws.columns:
         max_len = max(len(str(cell.value)) for cell in column_cells)
         ws.column_dimensions[column_cells[0].column_letter].width = max_len + 2
+    
     wb.save(excel_path)
     return send_file(excel_path, as_attachment=True)
 
 # ============================================================
-# API ENDPOINTS FOR ESP32 & AJAX
+# API ENDPOINTS
 # ============================================================
 @app.route('/api/recognize', methods=['POST'])
 def api_recognize():
     """HTTP endpoint cho ESP32 gửi ảnh qua HTTP"""
     try:
-        # Kiểm tra API key
         api_key = request.headers.get('X-API-Key')
         class_name = request.headers.get('X-Class-Name')
         
@@ -744,23 +796,21 @@ def api_recognize():
         if not verify_api_key(api_key, class_name):
             return jsonify({"error": "Invalid API key"}), 401
         
-        # Validate class exists
         if not validate_class_exists(class_name):
             return jsonify({"error": "Class not found"}), 404
         
-        # Lấy image data
         img_data = request.get_data()
         
         if not img_data:
             return jsonify({"error": "No image data"}), 400
         
-        # Nhận diện khuôn mặt
         recognized_name = recognize_face_from_image(class_name, img_data)
         
-        # Gửi kết quả qua MQTT
-        result_topic = f"esp32cam/{class_name}/result"
-        result_json = json.dumps({"name": recognized_name})
-        mqtt_client.publish(result_topic, result_json)
+        # Gửi kết quả qua MQTT nếu có
+        if mqtt_client and mqtt_connected:
+            result_topic = f"esp32cam/{class_name}/result"
+            result_json = json.dumps({"name": recognized_name})
+            mqtt_client.publish(result_topic, result_json)
         
         print(f"[HTTP API] {class_name}: {recognized_name}")
         
@@ -772,6 +822,8 @@ def api_recognize():
         
     except Exception as e:
         print(f"❌ API error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/class/<class_name>/count')
@@ -821,7 +873,7 @@ def api_today_attendance(class_name):
         if not validate_class_exists(class_name):
             return jsonify({"error": "Class not found"}), 404
         
-        class_dir = ensure_class(class_name)
+        class_dir = ensure_class_structure(class_name)
         db_path = os.path.join(class_dir, "attendance.db")
         
         today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -851,15 +903,29 @@ def api_today_attendance(class_name):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/health")
+def health():
+    """Health check endpoint"""
+    global mqtt_connected
+    return jsonify({
+        "status": "healthy",
+        "mqtt": "connected" if mqtt_connected else "disconnected",
+        "classes": len(get_all_classes())
+    }), 200
+
 # ============================================================
 # ERROR HANDLERS
 # ============================================================
 @app.errorhandler(404)
 def not_found(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Not found"}), 404
     return render_template('404.html'), 404
 
 @app.errorhandler(500)
 def internal_error(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Internal server error"}), 500
     return render_template('500.html'), 500
 
 # ============================================================
@@ -867,8 +933,9 @@ def internal_error(e):
 # ============================================================
 def signal_handler(sig, frame):
     print('\n🛑 Shutting down gracefully...')
-    mqtt_client.disconnect()
-    print('✅ MQTT disconnected')
+    if mqtt_client:
+        mqtt_client.disconnect()
+        print('✅ MQTT disconnected')
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -877,30 +944,42 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ============================================================
 # STARTUP
 # ============================================================
-if __name__ == "__main__":
+def initialize_app():
+    """Initialize app on startup"""
+    print("\n" + "="*70)
+    print("🚀 INITIALIZING FACE RECOGNITION ATTENDANCE SYSTEM")
+    print("="*70 + "\n")
+    
     # Ensure directories exist
     os.makedirs(DS_DIR, exist_ok=True)
     os.makedirs(BASE_DIR, exist_ok=True)
+    print(f"✅ Created directories: {DS_DIR}, {BASE_DIR}")
     
-    # Load API keys when app starts
-    print("📡 Loading API keys...")
+    # Check for existing classes
+    classes = get_all_classes()
+    print(f"📚 Found {len(classes)} existing classes: {classes}")
+    
+    # Load API keys
+    print("🔑 Loading API keys...")
     load_api_keys()
     
-    # Start MQTT in background thread
-    print("📡 Starting MQTT client...")
-    mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
-    mqtt_thread.start()
+    # Initialize MQTT (async)
+    print("📡 Initializing MQTT client...")
+    init_mqtt()
     
-    print("✅ Flask app initialized")
+    print("\n" + "="*70)
+    print("✅ SYSTEM READY")
+    print("="*70 + "\n")
+
+# Initialize on module load (for gunicorn)
+initialize_app()
+
+if __name__ == "__main__":
+    # Development mode
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    # Run Flask app
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
-else:
-    # Production mode (gunicorn)
-    os.makedirs(DS_DIR, exist_ok=True)
-    os.makedirs(BASE_DIR, exist_ok=True)
-    load_api_keys()
-    mqtt_thread = threading.Thread(target=start_mqtt, daemon=True)
-    mqtt_thread.start()
-    print("✅ Flask app initialized")
+    print(f"\n🌐 Starting Flask server on port {port}")
+    print(f"🔧 Debug mode: {debug}\n")
+    
+    app.run(host='0.0.0.0', port=port, debug=debug)
