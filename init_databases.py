@@ -9,12 +9,19 @@ import sqlite3
 import datetime
 from werkzeug.security import generate_password_hash
 
+BASE_DIR = "classes"
+SYSTEM_DIR = os.environ.get("SYSTEM_DIR") or os.path.join(BASE_DIR, "_system")
+
+def _db_path(filename: str) -> str:
+    os.makedirs(SYSTEM_DIR, exist_ok=True)
+    return os.path.join(SYSTEM_DIR, filename)
+
 def init_user_db():
     """Khởi tạo database users"""
     print("📊 Initializing user database...")
     
     try:
-        conn = sqlite3.connect('users.db')
+        conn = sqlite3.connect(_db_path('users.db'), timeout=30)
         c = conn.cursor()
         
         # Create table
@@ -29,10 +36,14 @@ def init_user_db():
         # Check if admin exists
         c.execute("SELECT * FROM users WHERE username='admin'")
         if not c.fetchone():
-            admin_hash = generate_password_hash('admin123')
+            admin_password = os.environ.get("ADMIN_PASSWORD") or "admin123"
+            admin_hash = generate_password_hash(admin_password)
             c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
                      ('admin', admin_hash, 'admin', datetime.datetime.now().isoformat()))
-            print("   ✅ Created default admin user (admin/admin123)")
+            if os.environ.get("ADMIN_PASSWORD"):
+                print("   ✅ Created default admin user (admin/ADMIN_PASSWORD)")
+            else:
+                print("   ✅ Created default admin user (admin/admin123)")
         else:
             print("   ℹ️  Admin user already exists")
         
@@ -50,7 +61,7 @@ def init_api_keys_db():
     print("📊 Initializing API keys database...")
     
     try:
-        conn = sqlite3.connect('api_keys.db')
+        conn = sqlite3.connect(_db_path('api_keys.db'), timeout=30)
         c = conn.cursor()
         
         c.execute('''CREATE TABLE IF NOT EXISTS api_keys (
@@ -82,6 +93,12 @@ def ensure_directories():
             print("   ✅ Created 'classes' directory")
         else:
             print("   ℹ️  'classes' directory already exists")
+
+        if not os.path.exists(SYSTEM_DIR):
+            os.makedirs(SYSTEM_DIR, exist_ok=True)
+            print(f"   ✅ Created '{SYSTEM_DIR}' directory")
+        else:
+            print(f"   ℹ️  '{SYSTEM_DIR}' directory already exists")
         
         # Try to create DS subdirectory
         ds_path = 'classes/DS'

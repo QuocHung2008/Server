@@ -9,13 +9,55 @@ import base64
 import signal
 import sys
 import uuid
+from io import BytesIO
 
 DS_DIR = "classes/DS"
 BASE_DIR = "classes"
+SYSTEM_DIR = os.environ.get("SYSTEM_DIR") or os.path.join(BASE_DIR, "_system")
 TOLERANCE, DETECTION_MODEL = 0.5, "hog"
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+def _abs_path(path: str) -> str:
+    return os.path.abspath(path)
+
+def _safe_join(base_dir: str, *paths: str) -> str:
+    base_abs = _abs_path(base_dir)
+    combined = _abs_path(os.path.join(base_dir, *paths))
+    if combined == base_abs:
+        return combined
+    if not combined.startswith(base_abs + os.sep):
+        raise ValueError("Invalid path")
+    return combined
+
+def _get_or_create_secret_key() -> str:
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    try:
+        os.makedirs(SYSTEM_DIR, exist_ok=True)
+        secret_path = os.path.join(SYSTEM_DIR, "flask_secret_key")
+        if os.path.exists(secret_path):
+            with open(secret_path, "r", encoding="utf-8") as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        key = secrets.token_hex(32)
+        with open(secret_path, "w", encoding="utf-8") as f:
+            f.write(key)
+        try:
+            os.chmod(secret_path, 0o600)
+        except Exception:
+            pass
+        return key
+    except Exception:
+        return secrets.token_hex(32)
+
+app.secret_key = _get_or_create_secret_key()
+
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "10"))
+MAX_IMAGES_PER_STUDENT = int(os.environ.get("MAX_IMAGES_PER_STUDENT", "10"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 # Flask-Login setup
 login_manager = LoginManager()
@@ -32,12 +74,16 @@ MQTT_KEEPALIVE = 60
 VALID_API_KEYS = {}
 LOCKS = {}
 ENCODINGS_CACHE = {}
+ENCODINGS_LOCK = threading.Lock()
 image_buffer = {}
 mqtt_client = None
 mqtt_connected = False
+mqtt_lock_file = None
 cv2 = None
 np = None
 face_recognition = None
+STUDENT_LIST_CACHE = {}
+CLASSES_CACHE = {"value": None, "mtime": None}
 
 def lazy_load_cv2():
     """Lazy load OpenCV"""
@@ -62,12 +108,21 @@ def lazy_load_face_recognition():
 # ============================================================
 def get_all_classes():
     """Lấy danh sách tất cả các lớp từ file DS_*.xlsx"""
+    global CLASSES_CACHE
     classes = []
     try:
+        try:
+            ds_mtime = os.path.getmtime(DS_DIR) if os.path.exists(DS_DIR) else None
+        except OSError:
+            ds_mtime = None
+        if CLASSES_CACHE["value"] is not None and CLASSES_CACHE["mtime"] == ds_mtime:
+            return CLASSES_CACHE["value"]
+
         print(f"📂 Checking directory: {DS_DIR}")
         if not os.path.exists(DS_DIR):
             print(f"⚠️ Directory not found: {DS_DIR}, creating...")
             os.makedirs(DS_DIR, exist_ok=True)
+            CLASSES_CACHE = {"value": [], "mtime": ds_mtime}
             return []
         
         files = os.listdir(DS_DIR)
@@ -79,31 +134,35 @@ def get_all_classes():
                 classes.append(class_name)
                 print(f"✅ Found class: {class_name}")
         
+        classes = sorted(classes)
         print(f"📊 Total classes found: {len(classes)}")
-        return sorted(classes)
+        CLASSES_CACHE = {"value": classes, "mtime": ds_mtime}
+        return classes
     except Exception as e:
         print(f"❌ Error in get_all_classes: {e}")
         return []
 
 def ensure_class_structure(class_name):
     """Đảm bảo cấu trúc thư mục cho lớp"""
-    class_dir = os.path.join(BASE_DIR, class_name)
+    class_dir = _safe_join(BASE_DIR, class_name)
     known_faces_dir = os.path.join(class_dir, "known_faces")
     os.makedirs(known_faces_dir, exist_ok=True)
     
     db_path = os.path.join(class_dir, "attendance.db")
     if not os.path.exists(db_path):
-        conn = sqlite3.connect(db_path)
-        with conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    student_id TEXT,
-                    name TEXT,
-                    date TEXT,
-                    first_time TEXT,
-                    status TEXT,
-                    timestamp_iso TEXT)""")
-        conn.close()
+        conn = sqlite3.connect(db_path, timeout=30)
+        try:
+            with conn:
+                conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        student_id TEXT,
+                        name TEXT,
+                        date TEXT,
+                        first_time TEXT,
+                        status TEXT,
+                        timestamp_iso TEXT)""")
+        finally:
+            conn.close()
     
     if class_name not in LOCKS:
         LOCKS[class_name] = threading.Lock()
@@ -116,11 +175,19 @@ def validate_class_exists(class_name):
 
 def load_student_list(class_name: str) -> Dict[str, str]:
     """Load danh sách học sinh từ Excel"""
-    file_path = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
+    file_path = _safe_join(DS_DIR, f"DS_{class_name}.xlsx")
     if not os.path.exists(file_path):
         print(f"⚠️ Student list not found: {file_path}")
         return {}
     try:
+        try:
+            mtime = os.path.getmtime(file_path)
+        except OSError:
+            mtime = None
+        cached = STUDENT_LIST_CACHE.get(class_name)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
         wb = load_workbook(file_path, read_only=True)
         ws = wb.active
         students = {}
@@ -129,6 +196,7 @@ def load_student_list(class_name: str) -> Dict[str, str]:
                 students[str(row[0]).strip()] = str(row[1]).strip()
         wb.close()
         print(f"✅ Loaded {len(students)} students from {class_name}")
+        STUDENT_LIST_CACHE[class_name] = (mtime, students)
         return students
     except Exception as e:
         print(f"❌ Error reading {file_path}: {e}")
@@ -158,11 +226,13 @@ class User(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     try:
-        conn = sqlite3.connect('users.db')
-        c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE id=?", (user_id,))
-        row = c.fetchone()
-        conn.close()
+        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT * FROM users WHERE id=?", (user_id,))
+            row = c.fetchone()
+        finally:
+            conn.close()
         if row:
             return User(row[0], row[1], row[2], row[3])
     except Exception as e:
@@ -179,17 +249,19 @@ def load_api_keys():
     """Load API keys từ database vào memory"""
     global VALID_API_KEYS
     try:
-        conn = sqlite3.connect('api_keys.db')
-        c = conn.cursor()
-        c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
-        VALID_API_KEYS = {}
-        for row in c.fetchall():
-            VALID_API_KEYS[row[0]] = {
-                'class_name': row[1],
-                'device_name': row[2],
-                'created_at': row[3]
-            }
-        conn.close()
+        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
+            VALID_API_KEYS = {}
+            for row in c.fetchall():
+                VALID_API_KEYS[row[0]] = {
+                    'class_name': row[1],
+                    'device_name': row[2],
+                    'created_at': row[3]
+                }
+        finally:
+            conn.close()
         print(f"✅ Loaded {len(VALID_API_KEYS)} API keys")
     except Exception as e:
         print(f"❌ Error loading API keys: {e}")
@@ -214,11 +286,13 @@ def login():
         password = request.form.get('password')
         
         try:
-            conn = sqlite3.connect('users.db')
-            c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE username=?", (username,))
-            row = c.fetchone()
-            conn.close()
+            conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+            try:
+                c = conn.cursor()
+                c.execute("SELECT * FROM users WHERE username=?", (username,))
+                row = c.fetchone()
+            finally:
+                conn.close()
             
             if row and check_password_hash(row[2], password):
                 user = User(row[0], row[1], row[2], row[3])
@@ -257,12 +331,14 @@ def change_password():
             flash('Mật khẩu phải có ít nhất 6 ký tự', 'error')
         else:
             try:
-                conn = sqlite3.connect('users.db')
-                c = conn.cursor()
-                new_hash = generate_password_hash(new_password)
-                c.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
-                conn.commit()
-                conn.close()
+                conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+                try:
+                    c = conn.cursor()
+                    new_hash = generate_password_hash(new_password)
+                    c.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
+                    conn.commit()
+                finally:
+                    conn.close()
                 flash('Đổi mật khẩu thành công', 'success')
                 return redirect(url_for('index'))
             except Exception as e:
@@ -296,7 +372,7 @@ def upload_class_list():
         flash('Không có file được chọn', 'error')
         return redirect(url_for('manage_classes'))
     
-    if not file.filename.endswith('.xlsx'):
+    if not file.filename.lower().endswith('.xlsx'):
         flash('Chỉ chấp nhận file .xlsx', 'error')
         return redirect(url_for('manage_classes'))
     
@@ -308,7 +384,7 @@ def upload_class_list():
             flash('Tên file phải có định dạng: DS_TenLop.xlsx (ví dụ: DS_12T1.xlsx)', 'error')
             return redirect(url_for('manage_classes'))
         
-        filepath = os.path.join(DS_DIR, filename)
+        filepath = _safe_join(DS_DIR, filename)
         file.save(filepath)
         print(f"💾 Saved file: {filepath}")
         
@@ -327,6 +403,9 @@ def upload_class_list():
             
             class_name = filename[3:-5]
             ensure_class_structure(class_name)
+            STUDENT_LIST_CACHE.pop(class_name, None)
+            CLASSES_CACHE["value"] = None
+            CLASSES_CACHE["mtime"] = None
             
             flash(f'Tải lên thành công! Lớp {class_name} có {student_count} học sinh', 'success')
             print(f"✅ Class {class_name} uploaded with {student_count} students")
@@ -349,18 +428,23 @@ def upload_class_list():
 def delete_class(class_name):
     """Xóa lớp học"""
     try:
-        ds_file = os.path.join(DS_DIR, f"DS_{class_name}.xlsx")
+        ds_file = _safe_join(DS_DIR, f"DS_{class_name}.xlsx")
         if os.path.exists(ds_file):
             os.remove(ds_file)
             print(f"🗑️ Deleted file: {ds_file}")
+        STUDENT_LIST_CACHE.pop(class_name, None)
+        CLASSES_CACHE["value"] = None
+        CLASSES_CACHE["mtime"] = None
         
         try:
-            conn = sqlite3.connect('api_keys.db')
-            c = conn.cursor()
-            c.execute("DELETE FROM api_keys WHERE class_name=?", (class_name,))
-            deleted_count = c.rowcount
-            conn.commit()
-            conn.close()
+            conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+            try:
+                c = conn.cursor()
+                c.execute("DELETE FROM api_keys WHERE class_name=?", (class_name,))
+                deleted_count = c.rowcount
+                conn.commit()
+            finally:
+                conn.close()
             
             if deleted_count > 0:
                 load_api_keys()
@@ -384,11 +468,13 @@ def manage_api_keys():
     try:
         available_classes = get_all_classes()
         
-        conn = sqlite3.connect('api_keys.db')
-        c = conn.cursor()
-        c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
-        keys = c.fetchall()
-        conn.close()
+        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
+            keys = c.fetchall()
+        finally:
+            conn.close()
         return render_template('api_keys.html', keys=keys, available_classes=available_classes)
     except Exception as e:
         print(f"❌ Error loading API keys: {e}")
@@ -411,12 +497,14 @@ def create_api_key():
     
     try:
         api_key = generate_api_key()
-        conn = sqlite3.connect('api_keys.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
-                 (api_key, class_name, device_name, datetime.datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
+        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
+                     (api_key, class_name, device_name, datetime.datetime.now().isoformat()))
+            conn.commit()
+        finally:
+            conn.close()
         
         load_api_keys()
         flash(f'Tạo API key thành công cho lớp {class_name}', 'success')
@@ -430,11 +518,13 @@ def create_api_key():
 @login_required
 def delete_api_key(key_id):
     try:
-        conn = sqlite3.connect('api_keys.db')
-        c = conn.cursor()
-        c.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
-        conn.commit()
-        conn.close()
+        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
+            conn.commit()
+        finally:
+            conn.close()
         
         load_api_keys()
         flash('Đã xóa API key', 'success')
@@ -448,45 +538,55 @@ def delete_api_key(key_id):
 # FACE RECOGNITION FUNCTIONS
 # ============================================================
 def get_encodings_data(class_name):
-    if class_name in ENCODINGS_CACHE:
-        return ENCODINGS_CACHE[class_name]
+    with ENCODINGS_LOCK:
+        cached = ENCODINGS_CACHE.get(class_name)
+    if cached is not None:
+        return cached
     
-    enc_path = os.path.join(BASE_DIR, class_name, "encodings.pkl")
+    class_dir = ensure_class_structure(class_name)
+    enc_path = os.path.join(class_dir, "encodings.pkl")
     if not os.path.exists(enc_path):
         from encode_known_faces import build_encodings_for_class
-        data = build_encodings_for_class(os.path.join(BASE_DIR, class_name))
+        data = build_encodings_for_class(class_dir)
     else:
         with open(enc_path, "rb") as f:
             data = pickle.load(f)
     
-    ENCODINGS_CACHE[class_name] = data
+    with ENCODINGS_LOCK:
+        ENCODINGS_CACHE[class_name] = data
     return data
 
 def reload_cache(class_name):
-    enc_path = os.path.join(BASE_DIR, class_name, "encodings.pkl")
+    class_dir = ensure_class_structure(class_name)
+    enc_path = os.path.join(class_dir, "encodings.pkl")
     if os.path.exists(enc_path):
         with open(enc_path, "rb") as f:
-            ENCODINGS_CACHE[class_name] = pickle.load(f)
+            with ENCODINGS_LOCK:
+                ENCODINGS_CACHE[class_name] = pickle.load(f)
 
 def record_attendance(class_name, student_id):
     student_name = get_student_name(class_name, student_id)
-    db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
-    with LOCKS[class_name]:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
-        now = datetime.datetime.now()
-        time_str = now.strftime("%H:%M:%S")
-        iso = now.isoformat(sep=" ", timespec="seconds")
-        status = get_status_by_time(now)
-        exists = c.execute("SELECT 1 FROM attendance WHERE student_id=? AND date=?", 
-                          (student_id, today)).fetchone()
-        if not exists:
-            c.execute("""INSERT INTO attendance(student_id, name, date, first_time, status, timestamp_iso) 
-                        VALUES(?,?,?,?,?,?)""", 
-                     (student_id, student_name, today, time_str, status, iso))
-            conn.commit()
-        conn.close()
+    class_dir = ensure_class_structure(class_name)
+    db_path = os.path.join(class_dir, "attendance.db")
+    lock = LOCKS.setdefault(class_name, threading.Lock())
+    with lock:
+        conn = sqlite3.connect(db_path, timeout=30)
+        try:
+            c = conn.cursor()
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            now = datetime.datetime.now()
+            time_str = now.strftime("%H:%M:%S")
+            iso = now.isoformat(sep=" ", timespec="seconds")
+            status = get_status_by_time(now)
+            exists = c.execute("SELECT 1 FROM attendance WHERE student_id=? AND date=?",
+                              (student_id, today)).fetchone()
+            if not exists:
+                c.execute("""INSERT INTO attendance(student_id, name, date, first_time, status, timestamp_iso)
+                            VALUES(?,?,?,?,?,?)""",
+                         (student_id, student_name, today, time_str, status, iso))
+                conn.commit()
+        finally:
+            conn.close()
 
 def recognize_face_from_image(class_name: str, img_bytes: bytes):
     start_time = time.time()
@@ -537,11 +637,40 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
 # ============================================================
 def init_mqtt():
     """Initialize MQTT client lazily"""
-    global mqtt_client, mqtt_connected
+    global mqtt_client, mqtt_connected, mqtt_lock_file
     
     try:
+        if mqtt_client is not None:
+            return
+
+        os.makedirs(SYSTEM_DIR, exist_ok=True)
+        try:
+            import fcntl
+            mqtt_lock_file = open(os.path.join(SYSTEM_DIR, "mqtt.lock"), "w")
+            try:
+                fcntl.flock(mqtt_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                mqtt_connected = False
+                try:
+                    mqtt_lock_file.close()
+                except Exception:
+                    pass
+                mqtt_lock_file = None
+                return
+        except Exception:
+            mqtt_lock_file = None
+
         import paho.mqtt.client as mqtt
         
+        def purge_old_buffers(now_ts: float):
+            stale = []
+            for k, v in list(image_buffer.items()):
+                ts = v.get("received_at")
+                if ts is not None and now_ts - ts > 60:
+                    stale.append(k)
+            for k in stale:
+                del image_buffer[k]
+
         def on_connect(client, userdata, flags, rc):
             global mqtt_connected
             if rc == 0:
@@ -563,7 +692,9 @@ def init_mqtt():
             message_type = parts[3]
             
             if class_name not in image_buffer:
-                image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None}
+                image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None, "received_at": time.time(), "expected_chunks": None}
+            image_buffer[class_name]["received_at"] = time.time()
+            purge_old_buffers(image_buffer[class_name]["received_at"])
             
             if message_type == "meta":
                 try:
@@ -579,15 +710,21 @@ def init_mqtt():
                     image_buffer[class_name]["meta"] = meta
                     image_buffer[class_name]["api_key"] = api_key
                     image_buffer[class_name]["chunks"] = {}
-                    print(f"[{class_name}] 📥 Meta received: {meta['chunks']} chunks")
+                    image_buffer[class_name]["expected_chunks"] = meta.get("chunks")
+                    print(f"[{class_name}] 📥 Meta received: {meta.get('chunks')} chunks")
                 except Exception as e:
                     print(f"[{class_name}] ❌ Error parsing meta: {e}")
             
             elif message_type == "chunk":
                 if not image_buffer[class_name].get("api_key"):
                     return
-                chunk_id = int(parts[4])
-                image_buffer[class_name]["chunks"][chunk_id] = payload.decode()
+                if len(parts) < 5:
+                    return
+                try:
+                    chunk_id = int(parts[4])
+                except Exception:
+                    return
+                image_buffer[class_name]["chunks"][chunk_id] = payload.decode(errors="ignore")
             
             elif message_type == "done":
                 if not image_buffer[class_name].get("api_key"):
@@ -595,10 +732,16 @@ def init_mqtt():
                 
                 print(f"[{class_name}] ⚙️ Processing...")
                 try:
+                    expected = image_buffer[class_name].get("expected_chunks")
                     chunks_dict = image_buffer[class_name]["chunks"]
+                    if expected is not None and len(chunks_dict) != int(expected):
+                        raise ValueError(f"Missing chunks: expected={expected}, got={len(chunks_dict)}")
                     sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
                     base64_image = "".join(sorted_chunks)
-                    img_bytes = base64.b64decode(base64_image)
+                    try:
+                        img_bytes = base64.b64decode(base64_image, validate=True)
+                    except Exception:
+                        img_bytes = base64.b64decode(base64_image)
                     recognized_name = recognize_face_from_image(class_name, img_bytes)
                     result_topic = f"esp32cam/{class_name}/result"
                     result_json = json.dumps({"name": recognized_name})
@@ -645,11 +788,13 @@ def index():
                 print(f"⚠️ No students found for {class_name}")
                 continue
             
-            conn = sqlite3.connect(db_path)
-            c = conn.cursor()
-            c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
-            present_ids = {r[0] for r in c.fetchall()}
-            conn.close()
+            conn = sqlite3.connect(db_path, timeout=30)
+            try:
+                c = conn.cursor()
+                c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
+                present_ids = {r[0] for r in c.fetchall()}
+            finally:
+                conn.close()
             
             absent_ids = [sid for sid in students.keys() if sid not in present_ids]
             absent_names = [students[sid] for sid in absent_ids]
@@ -680,12 +825,14 @@ def class_home(class_name):
     class_dir = ensure_class_structure(class_name)
     students_dict = load_student_list(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    cur.execute("SELECT student_id, status FROM attendance WHERE date=?", (today,))
-    present_data = cur.fetchall()
-    conn.close()
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        cur = conn.cursor()
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        cur.execute("SELECT student_id, status FROM attendance WHERE date=?", (today,))
+        present_data = cur.fetchall()
+    finally:
+        conn.close()
     present = {r[0]: r[1] for r in present_data}
     students = []
     for student_id in sorted(students_dict.keys()):
@@ -713,13 +860,42 @@ def add_student(class_name):
         if student_id not in students:
             flash(f"Mã học sinh {student_id} không có trong danh sách!", "error")
             return redirect(url_for('add_student', class_name=class_name))
+
+        if len(files) > MAX_IMAGES_PER_STUDENT:
+            flash(f"Chỉ cho phép tối đa {MAX_IMAGES_PER_STUDENT} ảnh", "error")
+            return redirect(url_for('add_student', class_name=class_name))
         
-        person_dir = os.path.join(class_dir, "known_faces", student_id)
+        try:
+            known_faces_dir = os.path.join(class_dir, "known_faces")
+            person_dir = _safe_join(known_faces_dir, student_id)
+        except Exception:
+            flash("Mã học sinh không hợp lệ", "error")
+            return redirect(url_for('add_student', class_name=class_name))
         os.makedirs(person_dir, exist_ok=True)
         
+        saved = 0
         for file in files:
-            fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
-            file.save(os.path.join(person_dir, fname))
+            original = (file.filename or "").strip()
+            ext = original.rsplit(".", 1)[-1].lower() if "." in original else ""
+            if ext not in {"jpg", "jpeg", "png"}:
+                continue
+
+            try:
+                from PIL import Image
+                file.stream.seek(0)
+                img = Image.open(file.stream)
+                img.verify()
+                file.stream.seek(0)
+                img = Image.open(file.stream).convert("RGB")
+                fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8] + ".jpg"
+                img.save(os.path.join(person_dir, fname), format="JPEG", quality=90)
+                saved += 1
+            except Exception:
+                continue
+
+        if saved == 0:
+            flash("Không có ảnh hợp lệ để lưu", "error")
+            return redirect(url_for('add_student', class_name=class_name))
         
         # Import and build encodings
         from encode_known_faces import build_encodings_for_class
@@ -742,11 +918,13 @@ def attendance_history(class_name):
     
     class_dir = ensure_class_structure(class_name)
     db_path = os.path.join(class_dir, "attendance.db")
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
-    rows = cur.fetchall()
-    conn.close()
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
+        rows = cur.fetchall()
+    finally:
+        conn.close()
     return render_template('attendance_history.html', class_name=class_name, records=rows, user=current_user)
 
 @app.route("/class/<class_name>/export_excel")
@@ -756,14 +934,16 @@ def export_excel_class(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
         return redirect(url_for('index'))
     
-    db_path = os.path.join(BASE_DIR, class_name, "attendance.db")
-    excel_path = f"{class_name}_attendance.xlsx"
+    class_dir = ensure_class_structure(class_name)
+    db_path = os.path.join(class_dir, "attendance.db")
     
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
-    rows = cur.fetchall()
-    conn.close()
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
+        rows = cur.fetchall()
+    finally:
+        conn.close()
     
     wb = Workbook()
     ws = wb.active
@@ -777,8 +957,11 @@ def export_excel_class(class_name):
         max_len = max(len(str(cell.value)) for cell in column_cells)
         ws.column_dimensions[column_cells[0].column_letter].width = max_len + 2
     
-    wb.save(excel_path)
-    return send_file(excel_path, as_attachment=True)
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    download_name = secure_filename(f"{class_name}_attendance.xlsx") or "attendance.xlsx"
+    return send_file(bio, as_attachment=True, download_name=download_name, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ============================================================
 # API ENDPOINTS
@@ -878,11 +1061,13 @@ def api_today_attendance(class_name):
         
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        c.execute("SELECT student_id, name, first_time, status FROM attendance WHERE date=?", (today,))
-        records = c.fetchall()
-        conn.close()
+        conn = sqlite3.connect(db_path, timeout=30)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT student_id, name, first_time, status FROM attendance WHERE date=?", (today,))
+            records = c.fetchall()
+        finally:
+            conn.close()
         
         attendance_list = []
         for record in records:
@@ -928,19 +1113,16 @@ def internal_error(e):
         return jsonify({"error": "Internal server error"}), 500
     return render_template('500.html'), 500
 
+@app.errorhandler(413)
+def request_too_large(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"error": f"Payload too large (max {MAX_UPLOAD_MB}MB)"}), 413
+    flash(f"Tệp tải lên quá lớn (tối đa {MAX_UPLOAD_MB}MB)", "error")
+    return redirect(request.referrer or url_for("index"))
+
 # ============================================================
 # GRACEFUL SHUTDOWN
 # ============================================================
-def signal_handler(sig, frame):
-    print('\n🛑 Shutting down gracefully...')
-    if mqtt_client:
-        mqtt_client.disconnect()
-        print('✅ MQTT disconnected')
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 # ============================================================
 # STARTUP
 # ============================================================
@@ -953,6 +1135,7 @@ def initialize_app():
     # Ensure directories exist
     os.makedirs(DS_DIR, exist_ok=True)
     os.makedirs(BASE_DIR, exist_ok=True)
+    os.makedirs(SYSTEM_DIR, exist_ok=True)
     print(f"✅ Created directories: {DS_DIR}, {BASE_DIR}")
     
     # Check for existing classes
@@ -971,10 +1154,35 @@ def initialize_app():
     print("✅ SYSTEM READY")
     print("="*70 + "\n")
 
-# Initialize on module load (for gunicorn)
+def _migrate_legacy_db(filename: str):
+    legacy = os.path.join(os.getcwd(), filename)
+    target = _safe_join(SYSTEM_DIR, filename)
+    if os.path.exists(target) or not os.path.exists(legacy):
+        return
+    try:
+        os.replace(legacy, target)
+    except Exception:
+        try:
+            import shutil
+            shutil.copy2(legacy, target)
+        except Exception:
+            pass
+
+_migrate_legacy_db("users.db")
+_migrate_legacy_db("api_keys.db")
 initialize_app()
 
 if __name__ == "__main__":
+    def signal_handler(sig, frame):
+        print('\n🛑 Shutting down gracefully...')
+        if mqtt_client:
+            mqtt_client.disconnect()
+            print('✅ MQTT disconnected')
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Development mode
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
