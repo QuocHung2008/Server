@@ -99,6 +99,11 @@ login_manager.login_message = 'Vui lòng đăng nhập để truy cập.'
 MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
+MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "").strip()
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD", "").strip()
+MQTT_USE_TLS = os.environ.get("MQTT_USE_TLS", "").lower() in ("1", "true", "yes") or MQTT_PORT == 8883
+MQTT_TLS_INSECURE = os.environ.get("MQTT_TLS_INSECURE", "").lower() in ("1", "true", "yes")
+MQTT_CA_CERT_PATH = os.environ.get("MQTT_CA_CERT_PATH", "").strip()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 USE_POSTGRES = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
@@ -1068,6 +1073,18 @@ def init_mqtt():
         mqtt_client = mqtt.Client(client_id=f"railway-{uuid.uuid4().hex[:8]}")
         mqtt_client.on_connect = on_connect
         mqtt_client.on_message = on_message
+        if MQTT_USERNAME:
+            mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD or None)
+        if MQTT_USE_TLS:
+            try:
+                import ssl
+                if MQTT_CA_CERT_PATH:
+                    mqtt_client.tls_set(ca_certs=MQTT_CA_CERT_PATH, cert_reqs=ssl.CERT_REQUIRED)
+                else:
+                    mqtt_client.tls_set()
+                mqtt_client.tls_insecure_set(MQTT_TLS_INSECURE)
+            except Exception as e:
+                print(f"⚠️ MQTT TLS configuration warning: {e}")
         mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
         mqtt_client.loop_start()
         print("📡 MQTT client initialized (async)")

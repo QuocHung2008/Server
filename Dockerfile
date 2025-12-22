@@ -43,8 +43,33 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application source
 COPY . .
 
+# Copy ESP32 config generation script
+COPY generate_esp32_config.py /app/generate_esp32_config.py
+
 # Railway provides PORT dynamically
 ENV PORT=10000
+ENV MQTT_BROKER=broker.hivemq.com \
+    MQTT_PORT=1883 \
+    MQTT_USE_TLS=0 \
+    MQTT_TLS_INSECURE=0 \
+    MQTT_USERNAME= \
+    MQTT_PASSWORD= \
+    MQTT_CA_CERT_PATH= \
+    DATABASE_URL= \
+    SECRET_KEY=change-me \
+    ADMIN_PASSWORD=admin \
+    BASE_DIR=/app/classes \
+    DS_DIR=/app/classes/DS \
+    SYSTEM_DIR=/app/classes/_system \
+    MAX_UPLOAD_MB=10 \
+    MAX_IMAGES_PER_STUDENT=10 \
+    SESSION_COOKIE_SAMESITE=Lax \
+    SESSION_COOKIE_SECURE=0 \
+    RECOGNITION_WORKERS=2 \
+    PG_POOL_MAX=10 \
+    MAX_MQTT_BASE64_BYTES=6000000 \
+    MAX_MQTT_CHUNKS=8000 \
+    DEBUG=False
 EXPOSE 10000
 
 # Health check

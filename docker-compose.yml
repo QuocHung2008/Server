@@ -13,7 +13,12 @@ services:
       - PORT=10000
       - MQTT_BROKER=broker.hivemq.com
       - MQTT_PORT=1883
+      - MQTT_USERNAME=bill_cipher
+      - MQTT_PASSWORD=nohter-cuttih-1suNva
+      - MQTT_USE_TLS=0
+      - MQTT_TLS_INSECURE=0
       - DATABASE_URL=postgresql://attendance:attendance@db:5432/attendance
+      - ADMIN_PASSWORD=admin
     volumes:
       - ./classes:/app/classes
       - ./data:/app/data
