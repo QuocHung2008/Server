@@ -11,6 +11,34 @@ from werkzeug.security import generate_password_hash
 
 BASE_DIR = "classes"
 SYSTEM_DIR = os.environ.get("SYSTEM_DIR") or os.path.join(BASE_DIR, "_system")
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
+
+def _get_or_create_admin_password() -> str:
+    env_pw = os.environ.get("ADMIN_PASSWORD")
+    if env_pw:
+        return env_pw
+    try:
+        os.makedirs(SYSTEM_DIR, exist_ok=True)
+        pw_path = os.path.join(SYSTEM_DIR, "admin_password")
+        if os.path.exists(pw_path):
+            with open(pw_path, "r", encoding="utf-8") as f:
+                pw = f.read().strip()
+                if pw:
+                    return pw
+        import secrets
+        pw = secrets.token_urlsafe(18)
+        with open(pw_path, "w", encoding="utf-8") as f:
+            f.write(pw)
+        try:
+            os.chmod(pw_path, 0o600)
+        except Exception:
+            pass
+        print(f"ℹ️  Admin password stored in: {pw_path}")
+        return pw
+    except Exception:
+        import secrets
+        return secrets.token_urlsafe(18)
 
 def _db_path(filename: str) -> str:
     os.makedirs(SYSTEM_DIR, exist_ok=True)
@@ -36,14 +64,11 @@ def init_user_db():
         # Check if admin exists
         c.execute("SELECT * FROM users WHERE username='admin'")
         if not c.fetchone():
-            admin_password = os.environ.get("ADMIN_PASSWORD") or "admin123"
+            admin_password = _get_or_create_admin_password()
             admin_hash = generate_password_hash(admin_password)
             c.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
                      ('admin', admin_hash, 'admin', datetime.datetime.now().isoformat()))
-            if os.environ.get("ADMIN_PASSWORD"):
-                print("   ✅ Created default admin user (admin/ADMIN_PASSWORD)")
-            else:
-                print("   ✅ Created default admin user (admin/admin123)")
+            print("   ✅ Created default admin user (admin)")
         else:
             print("   ℹ️  Admin user already exists")
         
@@ -80,6 +105,69 @@ def init_api_keys_db():
         
     except Exception as e:
         print(f"❌ Error initializing API keys database: {e}")
+        return False
+
+def init_postgres_schema():
+    print("📊 Initializing PostgreSQL schema...")
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED
+    except Exception as e:
+        print(f"❌ psycopg2 missing: {e}")
+        return False
+
+    try:
+        conn = psycopg2.connect(dsn=DATABASE_URL, connect_timeout=8)
+        conn.set_isolation_level(ISOLATION_LEVEL_READ_COMMITTED)
+        cur = conn.cursor()
+
+        cur.execute("""CREATE TABLE IF NOT EXISTS users(
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            created_at TEXT
+        )""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS api_keys(
+            id BIGSERIAL PRIMARY KEY,
+            api_key TEXT UNIQUE NOT NULL,
+            class_name TEXT NOT NULL,
+            device_name TEXT,
+            created_at TEXT,
+            is_active INTEGER DEFAULT 1
+        )""")
+        cur.execute("""CREATE TABLE IF NOT EXISTS attendance(
+            id BIGSERIAL PRIMARY KEY,
+            class_name TEXT NOT NULL,
+            student_id TEXT NOT NULL,
+            name TEXT,
+            date TEXT,
+            first_time TEXT,
+            status TEXT,
+            timestamp_iso TEXT
+        )""")
+        try:
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS attendance_unique ON attendance(class_name, student_id, date)")
+        except Exception:
+            pass
+
+        cur.execute("SELECT 1 FROM users WHERE username=%s", ("admin",))
+        if not cur.fetchone():
+            admin_password = _get_or_create_admin_password()
+            admin_hash = generate_password_hash(admin_password)
+            cur.execute("INSERT INTO users (username, password_hash, role, created_at) VALUES (%s, %s, %s, %s)",
+                        ("admin", admin_hash, "admin", datetime.datetime.now().isoformat()))
+            print("   ✅ Created default admin user (admin)")
+        else:
+            print("   ℹ️  Admin user already exists")
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ PostgreSQL schema initialized successfully")
+        return True
+    except Exception as e:
+        print(f"❌ Error initializing PostgreSQL schema: {e}")
         return False
 
 def ensure_directories():
@@ -133,13 +221,17 @@ if __name__ == "__main__":
     if not ensure_directories():
         success = False
     
-    # 2. Initialize user database
-    if not init_user_db():
-        success = False
-    
-    # 3. Initialize API keys database
-    if not init_api_keys_db():
-        success = False
+    if USE_POSTGRES:
+        if not init_postgres_schema():
+            success = False
+    else:
+        # 2. Initialize user database
+        if not init_user_db():
+            success = False
+        
+        # 3. Initialize API keys database
+        if not init_api_keys_db():
+            success = False
     
     print("\n" + "="*70)
     if success:

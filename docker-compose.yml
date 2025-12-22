@@ -13,8 +13,8 @@ services:
       - PORT=10000
       - MQTT_BROKER=broker.hivemq.com
       - MQTT_PORT=1883
+      - DATABASE_URL=postgresql://attendance:attendance@db:5432/attendance
     volumes:
-      # Mount để giữ data khi container restart
       - ./classes:/app/classes
       - ./data:/app/data
     restart: unless-stopped
@@ -24,6 +24,21 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - attendance-net
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    container_name: attendance-db
+    environment:
+      - POSTGRES_DB=attendance
+      - POSTGRES_USER=attendance
+      - POSTGRES_PASSWORD=attendance
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
     networks:
       - attendance-net
 

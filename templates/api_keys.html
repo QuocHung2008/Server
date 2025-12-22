@@ -40,6 +40,7 @@
             
             {% if available_classes %}
             <form method="POST" action="/api_keys/create" class="space-y-6">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <!-- Class Selection -->
                     <div>
@@ -207,6 +208,7 @@
                         <!-- Actions -->
                         <td class="px-6 py-4 text-right">
                             <form method="POST" action="/api_keys/delete/{{ key[0] }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn xóa API key này?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button 
                                     type="submit"
                                     class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-sm font-semibold transition-all duration-200"

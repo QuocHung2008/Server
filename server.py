@@ -1,15 +1,17 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash, session, abort
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from typing import Dict
 from openpyxl import load_workbook, Workbook
-import os, sqlite3, pickle, datetime, threading, time, json, secrets
+import os, sqlite3, datetime, threading, time, json, secrets
 import base64
 import signal
 import sys
 import uuid
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.environ.get("BASE_DIR") or os.path.join(PROJECT_ROOT, "classes")
@@ -56,9 +58,36 @@ def _get_or_create_secret_key() -> str:
 
 app.secret_key = _get_or_create_secret_key()
 
+def _get_or_create_admin_password() -> str:
+    env_pw = os.environ.get("ADMIN_PASSWORD")
+    if env_pw:
+        return env_pw
+    try:
+        os.makedirs(SYSTEM_DIR, exist_ok=True)
+        pw_path = os.path.join(SYSTEM_DIR, "admin_password")
+        if os.path.exists(pw_path):
+            with open(pw_path, "r", encoding="utf-8") as f:
+                pw = f.read().strip()
+                if pw:
+                    return pw
+        pw = secrets.token_urlsafe(18)
+        with open(pw_path, "w", encoding="utf-8") as f:
+            f.write(pw)
+        try:
+            os.chmod(pw_path, 0o600)
+        except Exception:
+            pass
+        print(f"ℹ️  Admin password stored in: {pw_path}")
+        return pw
+    except Exception:
+        return secrets.token_urlsafe(18)
+
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "10"))
 MAX_IMAGES_PER_STUDENT = int(os.environ.get("MAX_IMAGES_PER_STUDENT", "10"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 # Flask-Login setup
 login_manager = LoginManager()
@@ -71,12 +100,17 @@ MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_KEEPALIVE = 60
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
+PG_POOL = None
+
 # Global variables
 VALID_API_KEYS = {}
 LOCKS = {}
 ENCODINGS_CACHE = {}
 ENCODINGS_LOCK = threading.Lock()
 image_buffer = {}
+IMAGE_BUFFER_LOCK = threading.Lock()
 mqtt_client = None
 mqtt_connected = False
 mqtt_lock_file = None
@@ -85,6 +119,149 @@ np = None
 face_recognition = None
 STUDENT_LIST_CACHE = {}
 CLASSES_CACHE = {"value": None, "mtime": None}
+RECOGNITION_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("RECOGNITION_WORKERS", "2")))
+RATE_LIMIT_LOCK = threading.Lock()
+RATE_LIMIT_BUCKETS = {}
+
+def _client_ip() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or (request.remote_addr or "unknown")
+    return request.remote_addr or "unknown"
+
+def _rate_limit(key: str, limit: int, window_seconds: int) -> bool:
+    now = time.time()
+    with RATE_LIMIT_LOCK:
+        bucket = RATE_LIMIT_BUCKETS.get(key)
+        if not bucket:
+            RATE_LIMIT_BUCKETS[key] = [now, 1]
+            return True
+        start_ts, count = bucket
+        if now - start_ts >= window_seconds:
+            RATE_LIMIT_BUCKETS[key] = [now, 1]
+            return True
+        if count >= limit:
+            return False
+        bucket[1] = count + 1
+        return True
+
+def _get_csrf_token() -> str:
+    tok = session.get("_csrf_token")
+    if not tok:
+        tok = secrets.token_urlsafe(32)
+        session["_csrf_token"] = tok
+    return tok
+
+@app.context_processor
+def _inject_csrf_token():
+    return {"csrf_token": _get_csrf_token}
+
+@app.before_request
+def _enforce_security_controls():
+    if request.method == "POST" and request.path == "/login":
+        ip = _client_ip()
+        if not _rate_limit(f"login:{ip}", limit=20, window_seconds=300):
+            return render_template("login.html"), 429
+
+    if request.path == "/api/recognize" and request.method == "POST":
+        api_key = request.headers.get("X-API-Key") or ""
+        ip = _client_ip()
+        key = f"api_recognize:{api_key or ip}"
+        if not _rate_limit(key, limit=120, window_seconds=60):
+            return jsonify({"error": "Too many requests"}), 429
+
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if current_user.is_authenticated and not request.path.startswith("/api/"):
+            token = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token") or ""
+            if not token or token != session.get("_csrf_token"):
+                abort(403)
+
+def _sql_for_backend(sql: str) -> str:
+    if USE_POSTGRES:
+        return sql.replace("?", "%s")
+    return sql
+
+def db_execute(cur, sql: str, params=()):
+    cur.execute(_sql_for_backend(sql), params)
+    return cur
+
+def _sqlite_connect(path: str):
+    conn = sqlite3.connect(path, timeout=30)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
+    return conn
+
+class _PooledConn:
+    def __init__(self, pool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if self._conn is None:
+            return
+        try:
+            self._pool.putconn(self._conn)
+        finally:
+            self._conn = None
+
+def _get_pg_pool():
+    global PG_POOL
+    if PG_POOL is not None:
+        return PG_POOL
+    if not USE_POSTGRES:
+        return None
+    try:
+        import psycopg2
+        from psycopg2.pool import ThreadedConnectionPool
+    except Exception as e:
+        raise RuntimeError(f"PostgreSQL configured but psycopg2 is missing: {e}")
+    max_pool = int(os.environ.get("PG_POOL_MAX", "10"))
+    PG_POOL = ThreadedConnectionPool(
+        1,
+        max_pool,
+        dsn=DATABASE_URL,
+        connect_timeout=8,
+    )
+    return PG_POOL
+
+def get_system_db_conn():
+    if USE_POSTGRES:
+        pool = _get_pg_pool()
+        return _PooledConn(pool, pool.getconn())
+    os.makedirs(SYSTEM_DIR, exist_ok=True)
+    return _sqlite_connect(_safe_join(SYSTEM_DIR, "system.db"))
+
+def get_api_keys_db_conn():
+    if USE_POSTGRES:
+        return get_system_db_conn()
+    os.makedirs(SYSTEM_DIR, exist_ok=True)
+    return _sqlite_connect(_safe_join(SYSTEM_DIR, "api_keys.db"))
+
+def get_users_db_conn():
+    if USE_POSTGRES:
+        return get_system_db_conn()
+    os.makedirs(SYSTEM_DIR, exist_ok=True)
+    return _sqlite_connect(_safe_join(SYSTEM_DIR, "users.db"))
+
+def get_attendance_db_conn(class_name: str):
+    if USE_POSTGRES:
+        return get_system_db_conn()
+    class_dir = ensure_class_structure(class_name)
+    db_path = os.path.join(class_dir, "attendance.db")
+    return _sqlite_connect(db_path)
 
 def lazy_load_cv2():
     """Lazy load OpenCV"""
@@ -159,12 +336,15 @@ def ensure_class_structure(class_name):
     known_faces_dir = os.path.join(class_dir, "known_faces")
     os.makedirs(known_faces_dir, exist_ok=True)
     
-    db_path = os.path.join(class_dir, "attendance.db")
-    if not os.path.exists(db_path):
-        conn = sqlite3.connect(db_path, timeout=30)
-        try:
-            with conn:
-                conn.execute("""CREATE TABLE IF NOT EXISTS attendance(
+    if USE_POSTGRES:
+        pass
+    else:
+        db_path = os.path.join(class_dir, "attendance.db")
+        if not os.path.exists(db_path):
+            conn = _sqlite_connect(db_path)
+            try:
+                cur = conn.cursor()
+                db_execute(cur, """CREATE TABLE IF NOT EXISTS attendance(
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         student_id TEXT,
                         name TEXT,
@@ -172,8 +352,13 @@ def ensure_class_structure(class_name):
                         first_time TEXT,
                         status TEXT,
                         timestamp_iso TEXT)""")
-        finally:
-            conn.close()
+                try:
+                    db_execute(cur, "CREATE UNIQUE INDEX IF NOT EXISTS attendance_unique ON attendance(student_id, date)")
+                except Exception:
+                    pass
+                conn.commit()
+            finally:
+                conn.close()
     
     if class_name not in LOCKS:
         LOCKS[class_name] = threading.Lock()
@@ -237,10 +422,10 @@ class User(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     try:
-        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+        conn = get_users_db_conn()
         try:
             c = conn.cursor()
-            c.execute("SELECT * FROM users WHERE id=?", (user_id,))
+            db_execute(c, "SELECT * FROM users WHERE id=?", (user_id,))
             row = c.fetchone()
         finally:
             conn.close()
@@ -249,6 +434,16 @@ def load_user(user_id):
     except Exception as e:
         print(f"❌ Error loading user: {e}")
     return None
+
+def admin_required(fn):
+    @wraps(fn)
+    def _wrapped(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return login_manager.unauthorized()
+        if getattr(current_user, "role", None) != "admin":
+            abort(403)
+        return fn(*args, **kwargs)
+    return _wrapped
 
 # ============================================================
 # API KEY MANAGEMENT
@@ -260,10 +455,10 @@ def load_api_keys():
     """Load API keys từ database vào memory"""
     global VALID_API_KEYS
     try:
-        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        conn = get_api_keys_db_conn()
         try:
             c = conn.cursor()
-            c.execute("SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
+            db_execute(c, "SELECT api_key, class_name, device_name, created_at FROM api_keys WHERE is_active=1")
             VALID_API_KEYS = {}
             for row in c.fetchall():
                 if not validate_class_exists(row[1]):
@@ -308,10 +503,10 @@ def login():
         password = request.form.get('password')
         
         try:
-            conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+            conn = get_users_db_conn()
             try:
                 c = conn.cursor()
-                c.execute("SELECT * FROM users WHERE username=?", (username,))
+                db_execute(c, "SELECT * FROM users WHERE username=?", (username,))
                 row = c.fetchone()
             finally:
                 conn.close()
@@ -353,11 +548,11 @@ def change_password():
             flash('Mật khẩu phải có ít nhất 6 ký tự', 'error')
         else:
             try:
-                conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "users.db"), timeout=30)
+                conn = get_users_db_conn()
                 try:
                     c = conn.cursor()
                     new_hash = generate_password_hash(new_password)
-                    c.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
+                    db_execute(c, "UPDATE users SET password_hash=? WHERE id=?", (new_hash, current_user.id))
                     conn.commit()
                 finally:
                     conn.close()
@@ -374,6 +569,7 @@ def change_password():
 # ============================================================
 @app.route('/classes/manage')
 @login_required
+@admin_required
 def manage_classes():
     """Trang quản lý danh sách lớp"""
     classes = get_all_classes()
@@ -382,6 +578,7 @@ def manage_classes():
 
 @app.route('/classes/template')
 @login_required
+@admin_required
 def download_class_template():
     wb = Workbook()
     ws = wb.active
@@ -403,6 +600,7 @@ def download_class_template():
 
 @app.route('/classes/upload', methods=['POST'])
 @login_required
+@admin_required
 def upload_class_list():
     """Upload file Excel danh sách lớp"""
     if 'file' not in request.files:
@@ -417,6 +615,17 @@ def upload_class_list():
     
     if not file.filename.lower().endswith('.xlsx'):
         flash('Chỉ chấp nhận file .xlsx', 'error')
+        return redirect(url_for('manage_classes'))
+
+    try:
+        file.stream.seek(0)
+        header = file.stream.read(4)
+        file.stream.seek(0)
+        if not header.startswith(b"PK"):
+            flash('File Excel không hợp lệ', 'error')
+            return redirect(url_for('manage_classes'))
+    except Exception:
+        flash('File Excel không hợp lệ', 'error')
         return redirect(url_for('manage_classes'))
     
     try:
@@ -468,6 +677,7 @@ def upload_class_list():
 
 @app.route('/classes/delete/<class_name>', methods=['POST'])
 @login_required
+@admin_required
 def delete_class(class_name):
     """Xóa lớp học"""
     try:
@@ -480,10 +690,10 @@ def delete_class(class_name):
         CLASSES_CACHE["mtime"] = None
         
         try:
-            conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+            conn = get_api_keys_db_conn()
             try:
                 c = conn.cursor()
-                c.execute("DELETE FROM api_keys WHERE class_name=?", (class_name,))
+                db_execute(c, "DELETE FROM api_keys WHERE class_name=?", (class_name,))
                 deleted_count = c.rowcount
                 conn.commit()
             finally:
@@ -507,14 +717,15 @@ def delete_class(class_name):
 # ============================================================
 @app.route('/api_keys')
 @login_required
+@admin_required
 def manage_api_keys():
     try:
         available_classes = get_all_classes()
         
-        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        conn = get_api_keys_db_conn()
         try:
             c = conn.cursor()
-            c.execute("SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
+            db_execute(c, "SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
             keys = c.fetchall()
         finally:
             conn.close()
@@ -526,6 +737,7 @@ def manage_api_keys():
 
 @app.route('/api_keys/create', methods=['POST'])
 @login_required
+@admin_required
 def create_api_key():
     class_name = request.form.get('class_name')
     device_name = request.form.get('device_name', '').strip()
@@ -540,10 +752,10 @@ def create_api_key():
     
     try:
         api_key = generate_api_key()
-        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        conn = get_api_keys_db_conn()
         try:
             c = conn.cursor()
-            c.execute("INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
+            db_execute(c, "INSERT INTO api_keys (api_key, class_name, device_name, created_at) VALUES (?, ?, ?, ?)",
                      (api_key, class_name, device_name, datetime.datetime.now().isoformat()))
             conn.commit()
         finally:
@@ -559,12 +771,13 @@ def create_api_key():
 
 @app.route('/api_keys/delete/<int:key_id>', methods=['POST'])
 @login_required
+@admin_required
 def delete_api_key(key_id):
     try:
-        conn = sqlite3.connect(_safe_join(SYSTEM_DIR, "api_keys.db"), timeout=30)
+        conn = get_api_keys_db_conn()
         try:
             c = conn.cursor()
-            c.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
+            db_execute(c, "DELETE FROM api_keys WHERE id=?", (key_id,))
             conn.commit()
         finally:
             conn.close()
@@ -587,13 +800,27 @@ def get_encodings_data(class_name):
         return cached
     
     class_dir = ensure_class_structure(class_name)
-    enc_path = os.path.join(class_dir, "encodings.pkl")
-    if not os.path.exists(enc_path):
+    enc_npz_path = os.path.join(class_dir, "encodings.npz")
+    enc_pkl_path = os.path.join(class_dir, "encodings.pkl")
+    if not os.path.exists(enc_npz_path) and os.path.exists(enc_pkl_path):
+        try:
+            import pickle as _pickle
+            import numpy as _np
+            with open(enc_pkl_path, "rb") as f:
+                legacy = _pickle.load(f) or {}
+            enc_arr = _np.asarray(legacy.get("encodings", []), dtype=_np.float64)
+            name_arr = _np.asarray(legacy.get("names", []), dtype=str)
+            _np.savez_compressed(enc_npz_path, encodings=enc_arr, names=name_arr)
+        except Exception:
+            pass
+
+    if not os.path.exists(enc_npz_path):
         from encode_known_faces import build_encodings_for_class
         data = build_encodings_for_class(class_dir)
     else:
-        with open(enc_path, "rb") as f:
-            data = pickle.load(f)
+        import numpy as _np
+        loaded = _np.load(enc_npz_path, allow_pickle=False)
+        data = {"encodings": [e for e in loaded["encodings"]], "names": [str(n) for n in loaded["names"]]}
     
     with ENCODINGS_LOCK:
         ENCODINGS_CACHE[class_name] = data
@@ -601,19 +828,19 @@ def get_encodings_data(class_name):
 
 def reload_cache(class_name):
     class_dir = ensure_class_structure(class_name)
-    enc_path = os.path.join(class_dir, "encodings.pkl")
-    if os.path.exists(enc_path):
-        with open(enc_path, "rb") as f:
-            with ENCODINGS_LOCK:
-                ENCODINGS_CACHE[class_name] = pickle.load(f)
+    enc_npz_path = os.path.join(class_dir, "encodings.npz")
+    if os.path.exists(enc_npz_path):
+        import numpy as _np
+        loaded = _np.load(enc_npz_path, allow_pickle=False)
+        data = {"encodings": [e for e in loaded["encodings"]], "names": [str(n) for n in loaded["names"]]}
+        with ENCODINGS_LOCK:
+            ENCODINGS_CACHE[class_name] = data
 
 def record_attendance(class_name, student_id):
     student_name = get_student_name(class_name, student_id)
-    class_dir = ensure_class_structure(class_name)
-    db_path = os.path.join(class_dir, "attendance.db")
     lock = LOCKS.setdefault(class_name, threading.Lock())
     with lock:
-        conn = sqlite3.connect(db_path, timeout=30)
+        conn = get_attendance_db_conn(class_name)
         try:
             c = conn.cursor()
             today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -621,12 +848,21 @@ def record_attendance(class_name, student_id):
             time_str = now.strftime("%H:%M:%S")
             iso = now.isoformat(sep=" ", timespec="seconds")
             status = get_status_by_time(now)
-            exists = c.execute("SELECT 1 FROM attendance WHERE student_id=? AND date=?",
-                              (student_id, today)).fetchone()
+            if USE_POSTGRES:
+                exists = db_execute(c, "SELECT 1 FROM attendance WHERE class_name=? AND student_id=? AND date=?",
+                                  (class_name, student_id, today)).fetchone()
+            else:
+                exists = db_execute(c, "SELECT 1 FROM attendance WHERE student_id=? AND date=?",
+                                  (student_id, today)).fetchone()
             if not exists:
-                c.execute("""INSERT INTO attendance(student_id, name, date, first_time, status, timestamp_iso)
-                            VALUES(?,?,?,?,?,?)""",
-                         (student_id, student_name, today, time_str, status, iso))
+                if USE_POSTGRES:
+                    db_execute(c, """INSERT INTO attendance(class_name, student_id, name, date, first_time, status, timestamp_iso)
+                                VALUES(?,?,?,?,?,?,?)""",
+                             (class_name, student_id, student_name, today, time_str, status, iso))
+                else:
+                    db_execute(c, """INSERT INTO attendance(student_id, name, date, first_time, status, timestamp_iso)
+                                VALUES(?,?,?,?,?,?)""",
+                             (student_id, student_name, today, time_str, status, iso))
                 conn.commit()
         finally:
             conn.close()
@@ -704,6 +940,8 @@ def init_mqtt():
             mqtt_lock_file = None
 
         import paho.mqtt.client as mqtt
+        max_b64_bytes = int(os.environ.get("MAX_MQTT_BASE64_BYTES", "6000000"))
+        max_chunks = int(os.environ.get("MAX_MQTT_CHUNKS", "8000"))
         
         def purge_old_buffers(now_ts: float):
             stale = []
@@ -733,11 +971,15 @@ def init_mqtt():
                 return
             class_name = parts[1]
             message_type = parts[3]
-            
-            if class_name not in image_buffer:
-                image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None, "received_at": time.time(), "expected_chunks": None}
-            image_buffer[class_name]["received_at"] = time.time()
-            purge_old_buffers(image_buffer[class_name]["received_at"])
+
+            if not validate_class_exists(class_name):
+                return
+
+            with IMAGE_BUFFER_LOCK:
+                if class_name not in image_buffer:
+                    image_buffer[class_name] = {"chunks": {}, "meta": {}, "api_key": None, "received_at": time.time(), "expected_chunks": None, "b64_bytes": 0}
+                image_buffer[class_name]["received_at"] = time.time()
+                purge_old_buffers(image_buffer[class_name]["received_at"])
             
             if message_type == "meta":
                 try:
@@ -749,54 +991,79 @@ def init_mqtt():
                         client.publish(f"esp32cam/{class_name}/result", 
                                      json.dumps({"name": "Unauthorized", "error": "Invalid API key"}))
                         return
+
+                    expected = meta.get("chunks")
+                    try:
+                        expected_int = int(expected) if expected is not None else 0
+                    except Exception:
+                        expected_int = 0
+                    if expected_int <= 0 or expected_int > max_chunks:
+                        client.publish(f"esp32cam/{class_name}/result",
+                                     json.dumps({"name": "Unknown", "error": "Invalid chunks metadata"}))
+                        return
                     
-                    image_buffer[class_name]["meta"] = meta
-                    image_buffer[class_name]["api_key"] = api_key
-                    image_buffer[class_name]["chunks"] = {}
-                    image_buffer[class_name]["expected_chunks"] = meta.get("chunks")
+                    with IMAGE_BUFFER_LOCK:
+                        image_buffer[class_name]["meta"] = meta
+                        image_buffer[class_name]["api_key"] = api_key
+                        image_buffer[class_name]["chunks"] = {}
+                        image_buffer[class_name]["expected_chunks"] = expected_int
+                        image_buffer[class_name]["b64_bytes"] = 0
                     print(f"[{class_name}] 📥 Meta received: {meta.get('chunks')} chunks")
                 except Exception as e:
                     print(f"[{class_name}] ❌ Error parsing meta: {e}")
             
             elif message_type == "chunk":
-                if not image_buffer[class_name].get("api_key"):
-                    return
                 if len(parts) < 5:
                     return
                 try:
                     chunk_id = int(parts[4])
                 except Exception:
                     return
-                image_buffer[class_name]["chunks"][chunk_id] = payload.decode(errors="ignore")
+                with IMAGE_BUFFER_LOCK:
+                    buf = image_buffer.get(class_name)
+                    if not buf or not buf.get("api_key"):
+                        return
+                    buf["b64_bytes"] = int(buf.get("b64_bytes") or 0) + len(payload)
+                    if buf["b64_bytes"] > max_b64_bytes:
+                        del image_buffer[class_name]
+                        client.publish(f"esp32cam/{class_name}/result",
+                                     json.dumps({"name": "Unknown", "error": "Payload too large"}))
+                        return
+                    buf["chunks"][chunk_id] = payload.decode("ascii", errors="ignore")
             
             elif message_type == "done":
-                if not image_buffer[class_name].get("api_key"):
-                    return
-                
-                print(f"[{class_name}] ⚙️ Processing...")
-                try:
-                    expected = image_buffer[class_name].get("expected_chunks")
-                    chunks_dict = image_buffer[class_name]["chunks"]
-                    if expected is not None and len(chunks_dict) != int(expected):
-                        raise ValueError(f"Missing chunks: expected={expected}, got={len(chunks_dict)}")
-                    sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
-                    base64_image = "".join(sorted_chunks)
-                    try:
-                        img_bytes = base64.b64decode(base64_image, validate=True)
-                    except Exception:
-                        img_bytes = base64.b64decode(base64_image)
-                    recognized_name = recognize_face_from_image(class_name, img_bytes)
-                    result_topic = f"esp32cam/{class_name}/result"
-                    result_json = json.dumps({"name": recognized_name})
-                    client.publish(result_topic, result_json)
-                    print(f"[{class_name}] 📤 Result sent: {recognized_name}")
+                with IMAGE_BUFFER_LOCK:
+                    buf = image_buffer.get(class_name)
+                    if not buf or not buf.get("api_key"):
+                        return
+                    expected = int(buf.get("expected_chunks") or 0)
+                    chunks_dict = dict(buf.get("chunks") or {})
                     del image_buffer[class_name]
-                except Exception as e:
-                    print(f"[{class_name}] ❌ Processing error: {e}")
-                    client.publish(f"esp32cam/{class_name}/result", 
-                                 json.dumps({"name": "Unknown", "error": str(e)}))
-                    if class_name in image_buffer:
-                        del image_buffer[class_name]
+
+                if expected and len(chunks_dict) != expected:
+                    client.publish(f"esp32cam/{class_name}/result",
+                                 json.dumps({"name": "Unknown", "error": "Missing chunks"}))
+                    return
+
+                def _job():
+                    print(f"[{class_name}] ⚙️ Processing...")
+                    try:
+                        sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
+                        base64_image = "".join(sorted_chunks)
+                        try:
+                            img_bytes = base64.b64decode(base64_image, validate=True)
+                        except Exception:
+                            img_bytes = base64.b64decode(base64_image)
+                        recognized_name = recognize_face_from_image(class_name, img_bytes)
+                        result_topic = f"esp32cam/{class_name}/result"
+                        client.publish(result_topic, json.dumps({"name": recognized_name}))
+                        print(f"[{class_name}] 📤 Result sent: {recognized_name}")
+                    except Exception as e:
+                        print(f"[{class_name}] ❌ Processing error: {e}")
+                        client.publish(f"esp32cam/{class_name}/result",
+                                     json.dumps({"name": "Unknown", "error": "Processing failed"}))
+
+                RECOGNITION_EXECUTOR.submit(_job)
         
         mqtt_client = mqtt.Client(client_id=f"railway-{uuid.uuid4().hex[:8]}")
         mqtt_client.on_connect = on_connect
@@ -824,17 +1091,19 @@ def index():
         
         for class_name in all_classes:
             class_dir = ensure_class_structure(class_name)
-            db_path = os.path.join(class_dir, "attendance.db")
             
             students = load_student_list(class_name)
             if not students:
                 print(f"⚠️ No students found for {class_name}")
                 continue
             
-            conn = sqlite3.connect(db_path, timeout=30)
+            conn = get_attendance_db_conn(class_name)
             try:
                 c = conn.cursor()
-                c.execute("SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
+                if USE_POSTGRES:
+                    db_execute(c, "SELECT DISTINCT student_id FROM attendance WHERE class_name=? AND date=?", (class_name, today))
+                else:
+                    db_execute(c, "SELECT DISTINCT student_id FROM attendance WHERE date=?", (today,))
                 present_ids = {r[0] for r in c.fetchall()}
             finally:
                 conn.close()
@@ -867,12 +1136,14 @@ def class_home(class_name):
     
     class_dir = ensure_class_structure(class_name)
     students_dict = load_student_list(class_name)
-    db_path = os.path.join(class_dir, "attendance.db")
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = get_attendance_db_conn(class_name)
     try:
         cur = conn.cursor()
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        cur.execute("SELECT student_id, status FROM attendance WHERE date=?", (today,))
+        if USE_POSTGRES:
+            db_execute(cur, "SELECT student_id, status FROM attendance WHERE class_name=? AND date=?", (class_name, today))
+        else:
+            db_execute(cur, "SELECT student_id, status FROM attendance WHERE date=?", (today,))
         present_data = cur.fetchall()
     finally:
         conn.close()
@@ -886,6 +1157,7 @@ def class_home(class_name):
 
 @app.route("/class/<class_name>/add_student", methods=["GET", "POST"])
 @login_required
+@admin_required
 def add_student(class_name):
     if not validate_class_exists(class_name):
         flash(f'Lớp {class_name} không tồn tại', 'error')
@@ -960,11 +1232,13 @@ def attendance_history(class_name):
         return redirect(url_for('index'))
     
     class_dir = ensure_class_structure(class_name)
-    db_path = os.path.join(class_dir, "attendance.db")
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = get_attendance_db_conn(class_name)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
+        if USE_POSTGRES:
+            db_execute(cur, "SELECT name, date, first_time, status FROM attendance WHERE class_name=? ORDER BY date DESC, first_time DESC", (class_name,))
+        else:
+            db_execute(cur, "SELECT name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
         rows = cur.fetchall()
     finally:
         conn.close()
@@ -978,12 +1252,13 @@ def export_excel_class(class_name):
         return redirect(url_for('index'))
     
     class_dir = ensure_class_structure(class_name)
-    db_path = os.path.join(class_dir, "attendance.db")
-    
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = get_attendance_db_conn(class_name)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
+        if USE_POSTGRES:
+            db_execute(cur, "SELECT student_id, name, date, first_time, status FROM attendance WHERE class_name=? ORDER BY date DESC, first_time DESC", (class_name,))
+        else:
+            db_execute(cur, "SELECT student_id, name, date, first_time, status FROM attendance ORDER BY date DESC, first_time DESC")
         rows = cur.fetchall()
     finally:
         conn.close()
@@ -1100,14 +1375,15 @@ def api_today_attendance(class_name):
             return jsonify({"error": "Class not found"}), 404
         
         class_dir = ensure_class_structure(class_name)
-        db_path = os.path.join(class_dir, "attendance.db")
-        
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        
-        conn = sqlite3.connect(db_path, timeout=30)
+
+        conn = get_attendance_db_conn(class_name)
         try:
             c = conn.cursor()
-            c.execute("SELECT student_id, name, first_time, status FROM attendance WHERE date=?", (today,))
+            if USE_POSTGRES:
+                db_execute(c, "SELECT student_id, name, first_time, status FROM attendance WHERE class_name=? AND date=?", (class_name, today))
+            else:
+                db_execute(c, "SELECT student_id, name, first_time, status FROM attendance WHERE date=?", (today,))
             records = c.fetchall()
         finally:
             conn.close()
@@ -1156,6 +1432,13 @@ def internal_error(e):
         return jsonify({"error": "Internal server error"}), 500
     return render_template('500.html'), 500
 
+@app.errorhandler(403)
+def forbidden(e):
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Forbidden"}), 403
+    flash("Không có quyền truy cập", "error")
+    return redirect(url_for("index"))
+
 @app.errorhandler(413)
 def request_too_large(e):
     if request.path.startswith('/api/'):
@@ -1169,6 +1452,91 @@ def request_too_large(e):
 # ============================================================
 # STARTUP
 # ============================================================
+def init_database_schema():
+    try:
+        if USE_POSTGRES:
+            conn = get_system_db_conn()
+            try:
+                cur = conn.cursor()
+                db_execute(cur, """CREATE TABLE IF NOT EXISTS users(
+                        id BIGSERIAL PRIMARY KEY,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        role TEXT DEFAULT 'user',
+                        created_at TEXT
+                    )""")
+                db_execute(cur, """CREATE TABLE IF NOT EXISTS api_keys(
+                        id BIGSERIAL PRIMARY KEY,
+                        api_key TEXT UNIQUE NOT NULL,
+                        class_name TEXT NOT NULL,
+                        device_name TEXT,
+                        created_at TEXT,
+                        is_active INTEGER DEFAULT 1
+                    )""")
+                db_execute(cur, """CREATE TABLE IF NOT EXISTS attendance(
+                        id BIGSERIAL PRIMARY KEY,
+                        class_name TEXT NOT NULL,
+                        student_id TEXT NOT NULL,
+                        name TEXT,
+                        date TEXT,
+                        first_time TEXT,
+                        status TEXT,
+                        timestamp_iso TEXT
+                    )""")
+                try:
+                    db_execute(cur, "CREATE UNIQUE INDEX IF NOT EXISTS attendance_unique ON attendance(class_name, student_id, date)")
+                except Exception:
+                    pass
+                db_execute(cur, "SELECT 1 FROM users WHERE username=?", ("admin",))
+                row = cur.fetchone()
+                if not row:
+                    admin_password = _get_or_create_admin_password()
+                    admin_hash = generate_password_hash(admin_password)
+                    db_execute(cur, "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                               ("admin", admin_hash, "admin", datetime.datetime.now().isoformat()))
+                conn.commit()
+            finally:
+                conn.close()
+            return
+
+        conn = get_users_db_conn()
+        try:
+            c = conn.cursor()
+            db_execute(c, """CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'user',
+                created_at TEXT
+            )""")
+            db_execute(c, "SELECT 1 FROM users WHERE username=?", ("admin",))
+            row = c.fetchone()
+            if not row:
+                admin_password = _get_or_create_admin_password()
+                admin_hash = generate_password_hash(admin_password)
+                db_execute(c, "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                           ("admin", admin_hash, "admin", datetime.datetime.now().isoformat()))
+            conn.commit()
+        finally:
+            conn.close()
+
+        conn = get_api_keys_db_conn()
+        try:
+            c = conn.cursor()
+            db_execute(c, """CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_key TEXT UNIQUE NOT NULL,
+                class_name TEXT NOT NULL,
+                device_name TEXT,
+                created_at TEXT,
+                is_active INTEGER DEFAULT 1
+            )""")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ Database initialization warning: {e}")
+
 def initialize_app():
     """Initialize app on startup"""
     print("\n" + "="*70)
@@ -1180,6 +1548,8 @@ def initialize_app():
     os.makedirs(BASE_DIR, exist_ok=True)
     os.makedirs(SYSTEM_DIR, exist_ok=True)
     print(f"✅ Created directories: {DS_DIR}, {BASE_DIR}")
+
+    init_database_schema()
     
     # Check for existing classes
     classes = get_all_classes()

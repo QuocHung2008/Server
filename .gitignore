@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.db
 *.pkl
+*.npz
 venv/
 .env
 .DS_Store

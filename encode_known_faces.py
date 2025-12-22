@@ -1,13 +1,13 @@
 import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 
-import os, hashlib, pickle, json, cv2, numpy as np
+import os, hashlib, json, cv2, numpy as np
 from typing import Dict, List
 import face_recognition
 import sys
 
 KNOWN_FACES_DIR = "known_faces"
-ENCODINGS_FILE = "encodings.pkl"
+ENCODINGS_FILE = "encodings.npz"
 META_FILE = "encodings_meta.json"
 
 # ✅ GLOBAL FLAG để tránh recursive call
@@ -61,7 +61,8 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
     """Hàm encode thực sự (internal)"""
     
     known_dir = os.path.join(class_dir, "known_faces")
-    encodings_file = os.path.join(class_dir, "encodings.pkl")
+    encodings_file = os.path.join(class_dir, "encodings.npz")
+    legacy_encodings_file = os.path.join(class_dir, "encodings.pkl")
     meta_file = os.path.join(class_dir, "encodings_meta.json")
 
     print(f"\n{'='*70}")
@@ -73,8 +74,18 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
     if os.path.exists(encodings_file):
         print("📂 Đang load encoding cũ...")
         try:
-            with open(encodings_file, "rb") as f:
-                data = pickle.load(f)
+            loaded = np.load(encodings_file, allow_pickle=False)
+            known_encodings = [e for e in loaded["encodings"]]
+            known_names = [str(n) for n in loaded["names"]]
+            print(f"   ✓ Đã load: {len(set(known_names))} người, {len(known_names)} ảnh")
+        except Exception as e:
+            print(f"   ⚠️ Lỗi load file cũ: {e}, sẽ tạo mới")
+    elif os.path.exists(legacy_encodings_file):
+        print("📂 Đang load encoding cũ (legacy pickle)...")
+        try:
+            import pickle as _pickle
+            with open(legacy_encodings_file, "rb") as f:
+                data = _pickle.load(f) or {}
                 known_encodings = data.get("encodings", [])
                 known_names = data.get("names", [])
             print(f"   ✓ Đã load: {len(set(known_names))} người, {len(known_names)} ảnh")
@@ -179,9 +190,10 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
 
     # Lưu file
     print(f"\n💾 Đang lưu vào {encodings_file}...")
-    
-    with open(encodings_file, "wb") as f:
-        pickle.dump({"encodings": updated_encodings, "names": updated_names}, f)
+
+    enc_arr = np.asarray(updated_encodings, dtype=np.float64)
+    name_arr = np.asarray(updated_names, dtype=str)
+    np.savez_compressed(encodings_file, encodings=enc_arr, names=name_arr)
     
     unique_people = len(set(updated_names))
     total_images = len(updated_names)

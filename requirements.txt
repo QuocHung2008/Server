@@ -15,6 +15,9 @@ Pillow==10.1.0
 # Excel Processing
 openpyxl==3.1.2
 
+# Database
+psycopg2-binary==2.9.10
+
 # Health check (cho Docker)
 requests==2.31.0
 

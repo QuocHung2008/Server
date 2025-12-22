@@ -27,6 +27,7 @@
 
     <!-- Upload Form (Hidden) -->
     <form id="uploadForm" method="POST" action="/classes/upload" enctype="multipart/form-data" style="display: none;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="file" id="uploadInput" name="file" accept=".xlsx" onchange="handleFileSelect(event)">
     </form>
 
@@ -105,6 +106,7 @@
                                 Xem
                             </a>
                             <form method="POST" action="/classes/delete/{{ class_name }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn xóa lớp {{ class_name }}?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button 
                                     type="submit"
                                     class="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-sm font-semibold transition-all duration-200">
