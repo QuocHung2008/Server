@@ -37,6 +37,26 @@
     </div>
     {% else %}
     
+    <div class="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+        <div class="p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200">
+            <h3 class="text-xl font-bold text-blue-900 flex items-center gap-2">
+                <i class="fas fa-folder-open text-blue-600"></i>
+                Thêm nhanh theo folder (.zip)
+            </h3>
+            <p class="text-sm text-blue-800 mt-2">
+                Cấu trúc zip: <span class="font-mono">STUDENT_ID/anh1.jpg</span>, <span class="font-mono">STUDENT_ID/anh2.jpg</span>...
+            </p>
+        </div>
+        <form method="POST" action="{{ url_for('bulk_upload_students', class_name=class_name) }}" enctype="multipart/form-data" class="p-8 space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="file" name="zipfile" accept=".zip" required class="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+            <button type="submit" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-3 rounded-xl font-bold transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center gap-2">
+                <i class="fas fa-upload"></i>
+                Tải lên zip và Mã hóa
+            </button>
+        </form>
+    </div>
+
     <!-- Main Form -->
     <div class="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
         <div class="p-6 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-200">

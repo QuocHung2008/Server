@@ -52,12 +52,23 @@ def build_encodings_for_class(class_dir: str) -> Dict[str, List]:
     _ENCODING_IN_PROGRESS.add(abs_class_dir)
     
     try:
-        return _build_encodings_internal(class_dir)
+        return _build_encodings_internal(class_dir, force_rebuild=False)
     finally:
         # ✅ PROTECTION 2: Luôn remove khỏi set khi xong
         _ENCODING_IN_PROGRESS.discard(abs_class_dir)
 
-def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
+def build_encodings_for_class_force(class_dir: str) -> Dict[str, List]:
+    abs_class_dir = os.path.abspath(class_dir)
+    if abs_class_dir in _ENCODING_IN_PROGRESS:
+        print(f"⚠️ CẢNH BÁO: {class_dir} đang được encode, bỏ qua để tránh lặp!")
+        return {"encodings": [], "names": []}
+    _ENCODING_IN_PROGRESS.add(abs_class_dir)
+    try:
+        return _build_encodings_internal(class_dir, force_rebuild=True)
+    finally:
+        _ENCODING_IN_PROGRESS.discard(abs_class_dir)
+
+def _build_encodings_internal(class_dir: str, force_rebuild: bool) -> Dict[str, List]:
     """Hàm encode thực sự (internal)"""
     
     known_dir = os.path.join(class_dir, "known_faces")
@@ -69,56 +80,47 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
     print(f"🔧 BẮT ĐẦU ENCODE: {os.path.basename(class_dir)}")
     print(f"{'='*70}")
 
-    # Load encoding cũ
-    known_encodings, known_names = [], []
-    if os.path.exists(encodings_file):
-        print("📂 Đang load encoding cũ...")
+    if not os.path.exists(known_dir):
+        print(f"❌ Không tìm thấy thư mục: {known_dir}")
+        return {"encodings": [], "names": []}
+
+    current_hash = compute_known_faces_hash(known_dir)
+    stored_hash = None
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                stored_hash = (json.load(f) or {}).get("hash")
+        except Exception:
+            stored_hash = None
+
+    if not force_rebuild and stored_hash and stored_hash == current_hash and os.path.exists(encodings_file):
         try:
             loaded = np.load(encodings_file, allow_pickle=False)
-            known_encodings = [e for e in loaded["encodings"]]
-            known_names = [str(n) for n in loaded["names"]]
-            print(f"   ✓ Đã load: {len(set(known_names))} người, {len(known_names)} ảnh")
-        except Exception as e:
-            print(f"   ⚠️ Lỗi load file cũ: {e}, sẽ tạo mới")
-    elif os.path.exists(legacy_encodings_file):
-        print("📂 Đang load encoding cũ (legacy pickle)...")
-        try:
-            import pickle as _pickle
-            with open(legacy_encodings_file, "rb") as f:
-                data = _pickle.load(f) or {}
-                known_encodings = data.get("encodings", [])
-                known_names = data.get("names", [])
-            print(f"   ✓ Đã load: {len(set(known_names))} người, {len(known_names)} ảnh")
-        except Exception as e:
-            print(f"   ⚠️ Lỗi load file cũ: {e}, sẽ tạo mới")
+            encs = [e for e in loaded["encodings"]]
+            names = [str(n) for n in loaded["names"]]
+            print(f"📦 Encoding đã up-to-date: {len(set(names))} người, {len(names)} ảnh")
+            return {"encodings": encs, "names": names}
+        except Exception:
+            pass
 
-    # Lấy danh sách người trong thư mục
+    if force_rebuild:
+        print("♻️ Force rebuild encodings (bỏ qua cache cũ)")
+    else:
+        print("♻️ Detected changes in known_faces, rebuild encodings")
+
     if not os.path.exists(known_dir):
         print(f"❌ Không tìm thấy thư mục: {known_dir}")
         return {"encodings": [], "names": []}
     
-    names_in_dir = set([d for d in os.listdir(known_dir) 
-                       if os.path.isdir(os.path.join(known_dir, d))])
+    people = sorted([d for d in os.listdir(known_dir) if os.path.isdir(os.path.join(known_dir, d))])
 
     updated_encodings, updated_names = [], []
-
-    # Giữ encoding cũ
-    for enc, n in zip(known_encodings, known_names):
-        if n in names_in_dir:
-            updated_encodings.append(enc)
-            updated_names.append(n)
-    
-    # ✅ CRITICAL: Tạo set tracking TRƯỚC vòng lặp
-    processed_names = set(updated_names)
-    
-    # Lọc người MỚI cần encode
-    new_people = sorted([n for n in names_in_dir if n not in processed_names])
     
     # Encode từng người
-    for idx, name in enumerate(new_people, 1):
+    for idx, name in enumerate(people, 1):
         person_dir = os.path.join(known_dir, name)
         
-        print(f"\n[{idx}/{len(new_people)}] 👤 {name}")
+        print(f"\n[{idx}/{len(people)}] 👤 {name}")
         
         # Lọc file ảnh hợp lệ
         image_files = sorted([f for f in os.listdir(person_dir) 
@@ -185,9 +187,6 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
         else:
             print(f"   ⚠️ Không có ảnh nào hợp lệ!")
         
-        # ✅ CRITICAL: Đánh dấu đã xử lý
-        processed_names.add(name)
-
     # Lưu file
     print(f"\n💾 Đang lưu vào {encodings_file}...")
 
@@ -200,7 +199,7 @@ def _build_encodings_internal(class_dir: str) -> Dict[str, List]:
     
     with open(meta_file, "w") as f:
         json.dump({
-            "hash": compute_known_faces_hash(known_dir),
+            "hash": current_hash,
             "count": total_images,
             "unique_people": unique_people
         }, f)

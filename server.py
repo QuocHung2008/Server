@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from typing import Dict
+from typing import Dict, Optional
 from openpyxl import load_workbook, Workbook
 import os, sqlite3, datetime, threading, time, json, secrets
 import base64
@@ -12,6 +12,7 @@ import uuid
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+import zipfile
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.environ.get("BASE_DIR") or os.path.join(PROJECT_ROOT, "classes")
@@ -116,6 +117,8 @@ ENCODINGS_CACHE = {}
 ENCODINGS_LOCK = threading.Lock()
 image_buffer = {}
 IMAGE_BUFFER_LOCK = threading.Lock()
+DEVICE_STATE = {}
+DEVICE_STATE_LOCK = threading.Lock()
 mqtt_client = None
 mqtt_connected = False
 mqtt_lock_file = None
@@ -124,9 +127,81 @@ np = None
 face_recognition = None
 STUDENT_LIST_CACHE = {}
 CLASSES_CACHE = {"value": None, "mtime": None}
-RECOGNITION_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("RECOGNITION_WORKERS", "2")))
+RECOGNITION_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("RECOGNITION_WORKERS", "4")))
 RATE_LIMIT_LOCK = threading.Lock()
 RATE_LIMIT_BUCKETS = {}
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "").strip()
+SUPABASE_STORAGE_PREFIX = os.environ.get("SUPABASE_STORAGE_PREFIX", "attendance-system/").strip()
+SUPABASE_STORAGE_PUBLIC = os.environ.get("SUPABASE_STORAGE_PUBLIC", "").lower() in ("1", "true", "yes")
+SUPABASE_SIGNED_URL_EXPIRES_SECONDS = int(os.environ.get("SUPABASE_SIGNED_URL_EXPIRES_SECONDS", "3600"))
+CLOUD_DELETE_LOCAL_AFTER_UPLOAD = os.environ.get("CLOUD_DELETE_LOCAL_AFTER_UPLOAD", "").lower() in ("1", "true", "yes")
+
+def _cloud_key(*parts: str) -> str:
+    prefix = SUPABASE_STORAGE_PREFIX.strip("/")
+    rest = "/".join([p.strip("/").replace("\\", "/") for p in parts if p])
+    if prefix and rest:
+        return f"{prefix}/{rest}"
+    if prefix:
+        return prefix
+    return rest
+
+def _supabase_public_url(object_path: str) -> Optional[str]:
+    if not (SUPABASE_URL and SUPABASE_STORAGE_BUCKET and object_path):
+        return None
+    object_path = object_path.lstrip("/")
+    if SUPABASE_STORAGE_PUBLIC:
+        return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{object_path}"
+    try:
+        import requests
+
+        r = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/sign/{SUPABASE_STORAGE_BUCKET}/{object_path}",
+            headers={
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Content-Type": "application/json",
+            },
+            json={"expiresIn": SUPABASE_SIGNED_URL_EXPIRES_SECONDS},
+            timeout=10,
+        )
+        if r.status_code >= 200 and r.status_code < 300:
+            data = r.json() if r.content else {}
+            signed = (data.get("signedURL") or data.get("signedUrl") or "").lstrip("/")
+            if signed:
+                return f"{SUPABASE_URL}/{signed}"
+    except Exception:
+        return None
+    return None
+
+def _maybe_upload_to_supabase(local_path: str, object_path: str):
+    if not (SUPABASE_URL and SUPABASE_STORAGE_BUCKET and SUPABASE_SERVICE_ROLE_KEY):
+        return None
+    try:
+        import requests
+
+        with open(local_path, "rb") as f:
+            data = f.read()
+
+        object_path = object_path.lstrip("/")
+        r = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_STORAGE_BUCKET}/{object_path}",
+            headers={
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Content-Type": "image/jpeg",
+                "x-upsert": "true",
+            },
+            data=data,
+            timeout=30,
+        )
+        if r.status_code >= 200 and r.status_code < 300:
+            return _supabase_public_url(object_path)
+    except Exception:
+        return None
+    return None
 
 def _client_ip() -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -798,13 +873,36 @@ def delete_api_key(key_id):
 # ============================================================
 # FACE RECOGNITION FUNCTIONS
 # ============================================================
+def _compute_known_faces_hash(known_dir: str) -> str:
+    import hashlib
+    entries = []
+    for root, _, files in os.walk(known_dir):
+        for f in sorted(files):
+            path = os.path.join(root, f)
+            try:
+                entries.append(f"{os.path.relpath(path, known_dir)}|{os.path.getmtime(path)}")
+            except OSError:
+                pass
+    return hashlib.sha1("\n".join(entries).encode("utf-8")).hexdigest()
+
 def get_encodings_data(class_name):
+    class_dir = ensure_class_structure(class_name)
+    known_dir = os.path.join(class_dir, "known_faces")
+    known_hash = _compute_known_faces_hash(known_dir) if os.path.exists(known_dir) else ""
+    meta_path = os.path.join(class_dir, "encodings_meta.json")
+    meta_hash = None
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta_hash = (json.load(f) or {}).get("hash")
+        except Exception:
+            meta_hash = None
+
     with ENCODINGS_LOCK:
         cached = ENCODINGS_CACHE.get(class_name)
-    if cached is not None:
+    if cached is not None and cached.get("hash") == known_hash:
         return cached
-    
-    class_dir = ensure_class_structure(class_name)
+
     enc_npz_path = os.path.join(class_dir, "encodings.npz")
     enc_pkl_path = os.path.join(class_dir, "encodings.pkl")
     if not os.path.exists(enc_npz_path) and os.path.exists(enc_pkl_path):
@@ -819,25 +917,30 @@ def get_encodings_data(class_name):
         except Exception:
             pass
 
-    if not os.path.exists(enc_npz_path):
-        from encode_known_faces import build_encodings_for_class
-        data = build_encodings_for_class(class_dir)
+    if (not os.path.exists(enc_npz_path)) or (meta_hash is None or meta_hash != known_hash):
+        from encode_known_faces import build_encodings_for_class_force
+        data = build_encodings_for_class_force(class_dir)
+        known_hash = _compute_known_faces_hash(known_dir) if os.path.exists(known_dir) else known_hash
     else:
         import numpy as _np
         loaded = _np.load(enc_npz_path, allow_pickle=False)
-        data = {"encodings": [e for e in loaded["encodings"]], "names": [str(n) for n in loaded["names"]]}
+        enc_arr = loaded["encodings"]
+        names = [str(n) for n in loaded["names"]]
+        data = {"encodings_np": enc_arr, "names": names}
     
     with ENCODINGS_LOCK:
-        ENCODINGS_CACHE[class_name] = data
-    return data
+        ENCODINGS_CACHE[class_name] = {"hash": known_hash, **data}
+        return ENCODINGS_CACHE[class_name]
 
 def reload_cache(class_name):
     class_dir = ensure_class_structure(class_name)
+    known_dir = os.path.join(class_dir, "known_faces")
+    known_hash = _compute_known_faces_hash(known_dir) if os.path.exists(known_dir) else ""
     enc_npz_path = os.path.join(class_dir, "encodings.npz")
     if os.path.exists(enc_npz_path):
         import numpy as _np
         loaded = _np.load(enc_npz_path, allow_pickle=False)
-        data = {"encodings": [e for e in loaded["encodings"]], "names": [str(n) for n in loaded["names"]]}
+        data = {"hash": known_hash, "encodings_np": loaded["encodings"], "names": [str(n) for n in loaded["names"]]}
         with ENCODINGS_LOCK:
             ENCODINGS_CACHE[class_name] = data
 
@@ -880,12 +983,19 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
     
     ensure_class_structure(class_name)
     data = get_encodings_data(class_name)
+    encodings_np = data.get("encodings_np")
+    if encodings_np is None or len(encodings_np) == 0:
+        return "Unknown"
     
     img_bgr = cv2_lib.imdecode(np_lib.frombuffer(img_bytes, np_lib.uint8), cv2_lib.IMREAD_COLOR)
     if img_bgr is None:
         print(f"[{class_name}] ❌ Invalid image")
         return "Unknown"
     
+    max_w = int(os.environ.get("RECOGNITION_MAX_WIDTH", "800"))
+    if max_w > 0 and img_bgr.shape[1] > max_w:
+        scale = max_w / float(img_bgr.shape[1])
+        img_bgr = cv2_lib.resize(img_bgr, (max_w, int(img_bgr.shape[0] * scale)))
     img_rgb = cv2_lib.cvtColor(img_bgr, cv2_lib.COLOR_BGR2RGB)
     locs = fr_lib.face_locations(img_rgb, model=DETECTION_MODEL)
     
@@ -901,13 +1011,12 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
         best_face_idx = np_lib.argmax(areas)
     
     enc = encs[best_face_idx]
-    matches = fr_lib.compare_faces(data["encodings"], enc, TOLERANCE)
-    dist = fr_lib.face_distance(data["encodings"], enc)
+    dist = fr_lib.face_distance(encodings_np, enc)
     
     recognized_name = "Unknown"
     if len(dist) > 0:
-        best = np_lib.argmin(dist)
-        if matches[best]:
+        best = int(np_lib.argmin(dist))
+        if float(dist[best]) <= float(TOLERANCE):
             student_id = data["names"][best]
             recognized_name = get_student_name(class_name, student_id)
             threading.Thread(target=record_attendance, args=(class_name, student_id), daemon=True).start()
@@ -963,6 +1072,9 @@ def init_mqtt():
                 mqtt_connected = True
                 print("✅ Connected to MQTT Broker")
                 client.subscribe("esp32cam/+/image/#")
+                client.subscribe("esp32cam/+/+/telemetry")
+                client.subscribe("esp32cam/+/+/status")
+                client.subscribe("esp32cam/+/+/result")
                 print("📡 Subscribed: esp32cam/+/image/#")
             else:
                 mqtt_connected = False
@@ -974,8 +1086,33 @@ def init_mqtt():
             parts = topic.split("/")
             if len(parts) < 4:
                 return
-            class_name = parts[1]
-            message_type = parts[3]
+            if parts[0] != "esp32cam":
+                return
+
+            if len(parts) >= 4 and parts[2] == "image":
+                class_name = parts[1]
+                message_type = parts[3]
+            elif len(parts) >= 4:
+                class_name = parts[1]
+                device_id = parts[2]
+                channel = parts[3]
+                if channel in ("telemetry", "status", "result"):
+                    if channel == "status":
+                        data = payload.decode("utf-8", errors="ignore").strip()
+                    else:
+                        try:
+                            data = json.loads(payload.decode("utf-8", errors="ignore") or "{}")
+                        except Exception:
+                            data = {}
+                    with DEVICE_STATE_LOCK:
+                        class_map = DEVICE_STATE.setdefault(class_name, {})
+                        dev = class_map.setdefault(device_id, {})
+                        dev[channel] = data
+                        dev["last_seen"] = time.time()
+                    return
+                return
+            else:
+                return
 
             if not validate_class_exists(class_name):
                 return
@@ -1041,6 +1178,7 @@ def init_mqtt():
                     buf = image_buffer.get(class_name)
                     if not buf or not buf.get("api_key"):
                         return
+                    meta = dict(buf.get("meta") or {})
                     expected = int(buf.get("expected_chunks") or 0)
                     chunks_dict = dict(buf.get("chunks") or {})
                     del image_buffer[class_name]
@@ -1060,8 +1198,11 @@ def init_mqtt():
                         except Exception:
                             img_bytes = base64.b64decode(base64_image)
                         recognized_name = recognize_face_from_image(class_name, img_bytes)
-                        result_topic = f"esp32cam/{class_name}/result"
-                        client.publish(result_topic, json.dumps({"name": recognized_name}))
+                        result_json = json.dumps({"name": recognized_name})
+                        device_id = (meta.get("device_id") or "").strip()
+                        if device_id:
+                            client.publish(f"esp32cam/{class_name}/{device_id}/result", result_json)
+                        client.publish(f"esp32cam/{class_name}/result", result_json)
                         print(f"[{class_name}] 📤 Result sent: {recognized_name}")
                     except Exception as e:
                         print(f"[{class_name}] ❌ Processing error: {e}")
@@ -1170,7 +1311,109 @@ def class_home(class_name):
         student_name = students_dict[student_id]
         status = present.get(student_id, "Vắng")
         students.append({"name": student_name, "status": status})
-    return render_template('attendance.html', class_name=class_name, students=students, user=current_user)
+    last_upload_url = None
+    last_upload_info = None
+    try:
+        last_path = os.path.join(class_dir, "last_upload.jpg")
+        if os.path.exists(last_path):
+            last_upload_url = url_for("class_last_upload", class_name=class_name, _=int(time.time()))
+        meta_path = os.path.join(class_dir, "last_upload.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                last_upload_info = json.load(f)
+    except Exception:
+        last_upload_url = None
+        last_upload_info = None
+
+    devices = []
+    with DEVICE_STATE_LOCK:
+        class_devices = dict(DEVICE_STATE.get(class_name) or {})
+    for dev_id, payload in class_devices.items():
+        devices.append(
+            {
+                "id": dev_id,
+                "last_seen": payload.get("last_seen"),
+                "status": payload.get("status") or {},
+                "telemetry": payload.get("telemetry") or {},
+            }
+        )
+    devices.sort(key=lambda d: d.get("last_seen") or 0, reverse=True)
+
+    return render_template(
+        'attendance.html',
+        class_name=class_name,
+        students=students,
+        user=current_user,
+        last_upload_url=last_upload_url,
+        last_upload_info=last_upload_info,
+        devices=devices,
+    )
+
+@app.route("/class/<class_name>/last_upload.jpg")
+@login_required
+def class_last_upload(class_name):
+    if not validate_class_exists(class_name):
+        abort(404)
+    class_dir = ensure_class_structure(class_name)
+    last_path = os.path.join(class_dir, "last_upload.jpg")
+    if not os.path.exists(last_path):
+        abort(404)
+    return send_file(last_path, mimetype="image/jpeg", conditional=False)
+
+@app.route("/class/<class_name>/rebuild_encodings", methods=["POST"])
+@login_required
+@admin_required
+def rebuild_encodings(class_name):
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    class_dir = ensure_class_structure(class_name)
+    from encode_known_faces import build_encodings_for_class_force
+    build_encodings_for_class_force(class_dir)
+    reload_cache(class_name)
+    flash("Đã mã hóa lại dữ liệu khuôn mặt", "success")
+    return redirect(url_for("class_home", class_name=class_name))
+
+@app.route("/class/<class_name>/device/<device_id>/command", methods=["POST"])
+@login_required
+@admin_required
+def send_device_command(class_name, device_id):
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+    if not mqtt_client or not mqtt_connected:
+        flash("MQTT chưa kết nối", "error")
+        return redirect(url_for("class_home", class_name=class_name))
+
+    action = (request.form.get("action") or "").strip()
+    cmd = {}
+
+    if action == "capture":
+        cmd["capture"] = True
+    elif action == "reboot":
+        cmd["reboot"] = True
+    elif action == "flash_on":
+        cmd["flash"] = True
+    elif action == "flash_off":
+        cmd["flash"] = False
+    elif action == "mirror_on":
+        cmd["camera"] = {"mirror": True}
+    elif action == "mirror_off":
+        cmd["camera"] = {"mirror": False}
+    elif action == "wifi":
+        ssid = (request.form.get("ssid") or "").strip()
+        pwd = (request.form.get("pass") or "").strip()
+        if not ssid:
+            flash("Thiếu SSID", "error")
+            return redirect(url_for("class_home", class_name=class_name))
+        cmd["wifi"] = {"ssid": ssid, "pass": pwd}
+    else:
+        flash("Lệnh không hợp lệ", "error")
+        return redirect(url_for("class_home", class_name=class_name))
+
+    mqtt_client.publish(f"esp32cam/{class_name}/{device_id}/cmd", json.dumps(cmd))
+    flash("Đã gửi lệnh tới thiết bị", "success")
+    return redirect(url_for("class_home", class_name=class_name))
 
 @app.route("/class/<class_name>/add_student", methods=["GET", "POST"])
 @login_required
@@ -1220,7 +1463,10 @@ def add_student(class_name):
                 file.stream.seek(0)
                 img = Image.open(file.stream).convert("RGB")
                 fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8] + ".jpg"
-                img.save(os.path.join(person_dir, fname), format="JPEG", quality=90)
+                out_path = os.path.join(person_dir, fname)
+                img.save(out_path, format="JPEG", quality=85)
+                object_path = _cloud_key("known_faces", class_name, student_id, fname)
+                _maybe_upload_to_supabase(out_path, object_path)
                 saved += 1
             except Exception:
                 continue
@@ -1230,8 +1476,8 @@ def add_student(class_name):
             return redirect(url_for('add_student', class_name=class_name))
         
         # Import and build encodings
-        from encode_known_faces import build_encodings_for_class
-        build_encodings_for_class(class_dir)
+        from encode_known_faces import build_encodings_for_class_force
+        build_encodings_for_class_force(class_dir)
         reload_cache(class_name)
         
         flash("Thêm học sinh thành công!", "success")
@@ -1240,6 +1486,97 @@ def add_student(class_name):
     students = load_student_list(class_name)
     student_list = [{"id": sid, "name": name} for sid, name in sorted(students.items())]
     return render_template('add_student.html', class_name=class_name, students=student_list, user=current_user)
+
+@app.route("/class/<class_name>/bulk_upload", methods=["POST"])
+@login_required
+@admin_required
+def bulk_upload_students(class_name):
+    if not validate_class_exists(class_name):
+        flash(f'Lớp {class_name} không tồn tại', 'error')
+        return redirect(url_for('index'))
+
+    class_dir = ensure_class_structure(class_name)
+    students = load_student_list(class_name)
+    up = request.files.get("zipfile")
+    if up is None or not up.filename:
+        flash("Thiếu file .zip", "error")
+        return redirect(url_for("add_student", class_name=class_name))
+
+    try:
+        raw = up.read()
+        zf = zipfile.ZipFile(BytesIO(raw))
+    except Exception:
+        flash("File zip không hợp lệ", "error")
+        return redirect(url_for("add_student", class_name=class_name))
+
+    saved_total = 0
+    saved_by_student = {}
+    known_faces_dir = os.path.join(class_dir, "known_faces")
+    os.makedirs(known_faces_dir, exist_ok=True)
+
+    from PIL import Image
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        name = (info.filename or "").replace("\\", "/").lstrip("/")
+        if not name or name.startswith("__MACOSX/"):
+            continue
+        parts = [p for p in name.split("/") if p]
+        if len(parts) < 2:
+            continue
+        student_id = parts[0].strip()
+        if student_id not in students:
+            continue
+        filename = parts[-1]
+        if not filename or filename.startswith("."):
+            continue
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in {"jpg", "jpeg", "png"}:
+            continue
+
+        try:
+            person_dir = _safe_join(known_faces_dir, student_id)
+        except Exception:
+            continue
+        os.makedirs(person_dir, exist_ok=True)
+
+        existing = [f for f in os.listdir(person_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+        already = len(existing)
+        want = saved_by_student.get(student_id, 0)
+        if already + want >= MAX_IMAGES_PER_STUDENT:
+            continue
+
+        try:
+            content = zf.read(info)
+            img = Image.open(BytesIO(content))
+            img.verify()
+            img = Image.open(BytesIO(content)).convert("RGB")
+            out_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:8] + ".jpg"
+            out_path = os.path.join(person_dir, out_name)
+            img.save(out_path, format="JPEG", quality=85)
+            object_path = _cloud_key("known_faces", class_name, student_id, out_name)
+            _maybe_upload_to_supabase(out_path, object_path)
+        except Exception:
+            continue
+
+        saved_total += 1
+        saved_by_student[student_id] = saved_by_student.get(student_id, 0) + 1
+
+    try:
+        zf.close()
+    except Exception:
+        pass
+
+    if saved_total == 0:
+        flash("Không có ảnh hợp lệ được lưu (hoặc vượt giới hạn ảnh)", "error")
+        return redirect(url_for("add_student", class_name=class_name))
+
+    from encode_known_faces import build_encodings_for_class_force
+    build_encodings_for_class_force(class_dir)
+    reload_cache(class_name)
+
+    flash(f"Đã thêm nhanh {saved_total} ảnh cho {len(saved_by_student)} học sinh", "success")
+    return redirect(url_for("class_home", class_name=class_name))
 
 @app.route("/class/<class_name>/history")
 @login_required
@@ -1307,6 +1644,7 @@ def api_recognize():
     try:
         api_key = request.headers.get('X-API-Key')
         class_name = request.headers.get('X-Class-Name')
+        device_id = (request.headers.get("X-Device-Id") or "").strip()
         
         if not api_key or not class_name:
             return jsonify({"error": "Missing API key or class name"}), 401
@@ -1323,12 +1661,40 @@ def api_recognize():
             return jsonify({"error": "No image data"}), 400
         
         recognized_name = recognize_face_from_image(class_name, img_data)
+
+        try:
+            class_dir = ensure_class_structure(class_name)
+            last_path = os.path.join(class_dir, "last_upload.jpg")
+            with open(last_path, "wb") as f:
+                f.write(img_data)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            cloud_url = None
+            object_path = _cloud_key("captures", class_name, f"{ts}_{device_id or 'unknown'}.jpg")
+            cloud_url = _maybe_upload_to_supabase(last_path, object_path)
+            if cloud_url and CLOUD_DELETE_LOCAL_AFTER_UPLOAD:
+                    try:
+                        os.remove(last_path)
+                    except Exception:
+                        pass
+            with open(os.path.join(class_dir, "last_upload.json"), "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "ts": datetime.datetime.now().isoformat(sep=" ", timespec="seconds"),
+                        "device_id": device_id,
+                        "name": recognized_name,
+                        "cloud_url": cloud_url,
+                    },
+                    f,
+                )
+        except Exception:
+            pass
         
         # Gửi kết quả qua MQTT nếu có
         if mqtt_client and mqtt_connected:
-            result_topic = f"esp32cam/{class_name}/result"
             result_json = json.dumps({"name": recognized_name})
-            mqtt_client.publish(result_topic, result_json)
+            if device_id:
+                mqtt_client.publish(f"esp32cam/{class_name}/{device_id}/result", result_json)
+            mqtt_client.publish(f"esp32cam/{class_name}/result", result_json)
         
         print(f"[HTTP API] {class_name}: {recognized_name}")
         

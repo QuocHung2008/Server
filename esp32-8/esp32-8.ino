@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
@@ -5,9 +6,15 @@
 #include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <esp_camera.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include <Arduino_GFX_Library.h>
 #include <TJpg_Decoder.h>
 #include <ArduinoJson.h>
+#include <ESPmDNS.h>
+#include <ArduinoOTA.h>
 
 // ==================== CẤU HÌNH MẶC ĐỊNH (FALLBACK) ====================
 static const char* DEFAULT_WIFI_SSID = "Ngoc Tram 2";
@@ -27,13 +34,27 @@ static char CLASS_NAME[32] = "12T1";
 static char API_KEY[128] = "esp32_iDZNJVCtZrPVoWNl1a8jWoi61rAeZe-5a_v_8p6vOnQ";
 
 // ==================== CẤU HÌNH CHÂN CẮM ====================
+#ifndef TFT_SCK
 #define TFT_SCK 14
+#endif
+#ifndef TFT_MOSI
 #define TFT_MOSI 13
+#endif
+#ifndef TFT_CS
 #define TFT_CS 15
+#endif
+#ifndef TFT_DC
 #define TFT_DC 2
+#endif
+#ifndef TFT_RST
 #define TFT_RST -1
+#endif
+#ifndef BUTTON_PIN
 #define BUTTON_PIN 12
+#endif
+#ifndef FLASH_PIN
 #define FLASH_PIN 4
+#endif
 
 // ==================== MÀU SẮC ====================
 #define BLACK 0x0000
@@ -594,7 +615,11 @@ static void handleIncomingCommand(const JsonDocument& doc) {
       if (c.containsKey("streamQuality")) g_cfg.jpegQualityStream = (uint8_t)c["streamQuality"].as<int>();
       if (c.containsKey("resultTimeoutMs")) g_cfg.resultTimeoutMs = (uint32_t)c["resultTimeoutMs"].as<uint32_t>();
       if (c.containsKey("mqttChunkSize")) g_cfg.mqttImageChunkSize = (uint16_t)c["mqttChunkSize"].as<int>();
-      if (c.containsKey("mirror")) g_cfg.mirrorHorizontal = c["mirror"].as<bool>();
+      if (c.containsKey("mirror")) {
+        g_cfg.mirrorHorizontal = c["mirror"].as<bool>();
+        sensor_t* s = esp_camera_sensor_get();
+        if (s) s->set_hmirror(s, g_cfg.mirrorHorizontal ? 1 : 0);
+      }
     }
   }
 }
@@ -837,6 +862,7 @@ static void taskNetwork(void* pv) {
       }
       mqttEnsureConnected(now);
       if (g_mqtt.connected()) g_mqtt.loop();
+      ArduinoOTA.handle();
 
       if (now - lastTelemetryMs > 5000) {
         mqttPublishTelemetry();
@@ -1075,17 +1101,19 @@ void setup() {
   pinMode(FLASH_PIN, OUTPUT);
   digitalWrite(FLASH_PIN, LOW);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  
-  // Ensure GPIO ISR service is only installed once
-  if (!g_gpio_isr_installed) {
-    gpio_install_isr_service(0);
-    g_gpio_isr_installed = true;
-  }
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), onButtonIsr, FALLING);
 
   loadWifiFromNvs();
   webSetupRoutes();
   wifiStartSta();
+
+  {
+    char host[64];
+    snprintf(host, sizeof(host), "ESP32CAM-%s-%s", CLASS_NAME, g_deviceId);
+    ArduinoOTA.setHostname(host);
+    ArduinoOTA.setPassword(API_KEY);
+    ArduinoOTA.begin();
+  }
 
   if (MQTT_USE_TLS) {
     if (MQTT_TLS_INSECURE) {

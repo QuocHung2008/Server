@@ -11,13 +11,19 @@ services:
     environment:
       - SECRET_KEY=dev-secret-key-change-in-production
       - PORT=10000
-      - MQTT_BROKER=broker.hivemq.com
-      - MQTT_PORT=1883
+      - MQTT_BROKER=6575a30783c5453485012d4094a0db47.s1.eu.hivemq.cloud
+      - MQTT_PORT=8883
       - MQTT_USERNAME=bill_cipher
       - MQTT_PASSWORD=nohter-cuttih-1suNva
-      - MQTT_USE_TLS=0
-      - MQTT_TLS_INSECURE=0
-      - DATABASE_URL=postgresql://attendance:attendance@db:5432/attendance
+      - MQTT_USE_TLS=1
+      - MQTT_TLS_INSECURE=1
+      - DATABASE_URL=
+      - SUPABASE_URL=
+      - SUPABASE_SERVICE_ROLE_KEY=
+      - SUPABASE_STORAGE_BUCKET=
+      - SUPABASE_STORAGE_PREFIX=attendance-system/
+      - SUPABASE_STORAGE_PUBLIC=1
+      - SUPABASE_SIGNED_URL_EXPIRES_SECONDS=3600
       - ADMIN_PASSWORD=admin
     volumes:
       - ./classes:/app/classes
@@ -29,21 +35,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks:
-      - attendance-net
-    depends_on:
-      - db
-
-  db:
-    image: postgres:16-alpine
-    container_name: attendance-db
-    environment:
-      - POSTGRES_DB=attendance
-      - POSTGRES_USER=attendance
-      - POSTGRES_PASSWORD=attendance
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    restart: unless-stopped
     networks:
       - attendance-net
 

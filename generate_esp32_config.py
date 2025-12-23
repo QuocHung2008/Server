@@ -54,21 +54,24 @@ def generate_esp32_config(api_key: str, class_name: str) -> str:
     mqtt_use_tls = os.environ.get("MQTT_USE_TLS", "").lower() in ("1", "true", "yes")
     mqtt_tls_insecure = os.environ.get("MQTT_TLS_INSECURE", "").lower() in ("1", "true", "yes")
     
+    mqtt_username = os.environ.get("MQTT_USERNAME", "")
+    mqtt_password = os.environ.get("MQTT_PASSWORD", "")
+
     config_template = f"""
 // ==================== CẤU HÌNH TỰ ĐỘNG ====================
 // File này được sinh tự động từ server configuration
 // Không chỉnh sửa thủ công - sẽ bị ghi đè
 
-static const char* SERVER_URL = "{server_url}";
-static const char* MQTT_HOST = "{mqtt_broker}";
-static const uint16_t MQTT_PORT = {mqtt_port};
-static const bool MQTT_USE_TLS = {'true' if mqtt_use_tls else 'false'};
-static const bool MQTT_TLS_INSECURE = {'true' if mqtt_tls_insecure else 'false'};
-static const char* MQTT_USERNAME = "{os.environ.get('MQTT_USERNAME', '')}";
-static const char* MQTT_PASSWORD = "{os.environ.get('MQTT_PASSWORD', '')}";
-static const char* MQTT_ROOT_CA = "";
-static const char* CLASS_NAME = "{class_name}";
-static const char* API_KEY = "{api_key}";
+static char SERVER_URL[256] = "{server_url}";
+static char MQTT_HOST[128] = "{mqtt_broker}";
+static uint16_t MQTT_PORT = {mqtt_port};
+static bool MQTT_USE_TLS = {'true' if mqtt_use_tls else 'false'};
+static bool MQTT_TLS_INSECURE = {'true' if mqtt_tls_insecure else 'false'};
+static char MQTT_USERNAME[64] = "{mqtt_username}";
+static char MQTT_PASSWORD[64] = "{mqtt_password}";
+static char MQTT_ROOT_CA[512] = "";
+static char CLASS_NAME[32] = "{class_name}";
+static char API_KEY[128] = "{api_key}";
 
 // ==================== CẤU HÌNH MẶC ĐỊNH (FALLBACK) ====================
 static const char* DEFAULT_WIFI_SSID = "Ngoc Tram 2";
