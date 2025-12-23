@@ -17,10 +17,10 @@ services:
       - MQTT_PASSWORD=nohter-cuttih-1suNva
       - MQTT_USE_TLS=1
       - MQTT_TLS_INSECURE=1
-      - DATABASE_URL=
-      - SUPABASE_URL=
-      - SUPABASE_SERVICE_ROLE_KEY=
-      - SUPABASE_STORAGE_BUCKET=
+      - DATABASE_URL=postgresql://postgres:AIpSImkjjSgxVPNftBYcImlnhbZnpqah@postgres.railway.internal:5432/railway
+      - SUPABASE_URL=https://nfepanxnybnuodwgzrrv.supabase.co
+      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5mZXBhbnhueWJudW9kd2d6cnJ2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjQxNTUzMSwiZXhwIjoyMDgxOTkxNTMxfQ.yPRwxdXwkfTpysP6m4EXeeUncNE4ogi2LI7Kv5CBxFc
+      - SUPABASE_STORAGE_BUCKET=attendance-images
       - SUPABASE_STORAGE_PREFIX=attendance-system/
       - SUPABASE_STORAGE_PUBLIC=1
       - SUPABASE_SIGNED_URL_EXPIRES_SECONDS=3600

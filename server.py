@@ -107,7 +107,7 @@ MQTT_TLS_INSECURE = os.environ.get("MQTT_TLS_INSECURE", "").lower() in ("1", "tr
 MQTT_CA_CERT_PATH = os.environ.get("MQTT_CA_CERT_PATH", "").strip()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-USE_POSTGRES = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
+USE_POSTGRES = DATABASE_URL.lower().startswith(("postgresql://postgres:AIpSImkjjSgxVPNftBYcImlnhbZnpqah@postgres.railway.internal:5432/railway"))
 PG_POOL = None
 
 # Global variables
