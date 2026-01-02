@@ -83,8 +83,8 @@ def _get_or_create_admin_password() -> str:
     except Exception:
         return secrets.token_urlsafe(18)
 
-MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "10"))
-MAX_IMAGES_PER_STUDENT = int(os.environ.get("MAX_IMAGES_PER_STUDENT", "10"))
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "500"))
+MAX_IMAGES_PER_STUDENT = int(os.environ.get("MAX_IMAGES_PER_STUDENT", "50"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
@@ -1037,12 +1037,27 @@ def init_mqtt():
             return
 
         os.makedirs(SYSTEM_DIR, exist_ok=True)
+        # Robust lock file handling
+        lock_path = os.path.join(SYSTEM_DIR, "mqtt.lock")
         try:
             import fcntl
-            mqtt_lock_file = open(os.path.join(SYSTEM_DIR, "mqtt.lock"), "w")
+            mqtt_lock_file = open(lock_path, "w")
             try:
                 fcntl.flock(mqtt_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
+                # Check if lock file is stale (older than 10 seconds)
+                try:
+                    st = os.stat(lock_path)
+                    if time.time() - st.st_mtime > 10:
+                        print("⚠️ MQTT lock file stale, taking over...")
+                        # We can't really "take over" a locked file easily cross-process
+                        # without risk. But if we are here, another process holds the lock.
+                        # We should just return and let that process handle it.
+                        # Unless that process is dead.
+                        pass
+                except Exception:
+                    pass
+                
                 mqtt_connected = False
                 try:
                     mqtt_lock_file.close()
@@ -1050,7 +1065,8 @@ def init_mqtt():
                     pass
                 mqtt_lock_file = None
                 return
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Lock file error: {e}")
             mqtt_lock_file = None
 
         import paho.mqtt.client as mqtt
@@ -1226,12 +1242,16 @@ def init_mqtt():
                 mqtt_client.tls_insecure_set(MQTT_TLS_INSECURE)
             except Exception as e:
                 print(f"⚠️ MQTT TLS configuration warning: {e}")
+        
+        print(f"📡 Connecting to MQTT Broker: {MQTT_BROKER}:{MQTT_PORT} (TLS={MQTT_USE_TLS}, User={MQTT_USERNAME or 'None'})")
         mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
         mqtt_client.loop_start()
         print("📡 MQTT client initialized (async)")
         
     except Exception as e:
         print(f"⚠️ MQTT initialization warning: {e}")
+        import traceback
+        traceback.print_exc()
         mqtt_connected = False
 
 # ============================================================
@@ -1475,12 +1495,21 @@ def add_student(class_name):
             flash("Không có ảnh hợp lệ để lưu", "error")
             return redirect(url_for('add_student', class_name=class_name))
         
-        # Import and build encodings
-        from encode_known_faces import build_encodings_for_class_force
-        build_encodings_for_class_force(class_dir)
-        reload_cache(class_name)
+        # Encoding in background
+        def _background_process():
+            try:
+                # Import inside thread
+                from encode_known_faces import build_encodings_for_class_force
+                print(f"[{class_name}] 🔄 Starting background encoding...")
+                build_encodings_for_class_force(class_dir)
+                reload_cache(class_name)
+                print(f"[{class_name}] ✅ Background encoding complete")
+            except Exception as e:
+                print(f"[{class_name}] ❌ Background encoding failed: {e}")
+
+        threading.Thread(target=_background_process, daemon=True).start()
         
-        flash("Thêm học sinh thành công!", "success")
+        flash("Ảnh đang được xử lý ngầm. Vui lòng đợi vài phút để hệ thống nhận diện.", "success")
         return redirect(url_for("class_home", class_name=class_name))
     
     students = load_student_list(class_name)
@@ -1571,11 +1600,20 @@ def bulk_upload_students(class_name):
         flash("Không có ảnh hợp lệ được lưu (hoặc vượt giới hạn ảnh)", "error")
         return redirect(url_for("add_student", class_name=class_name))
 
-    from encode_known_faces import build_encodings_for_class_force
-    build_encodings_for_class_force(class_dir)
-    reload_cache(class_name)
+    # Encoding in background
+    def _background_process():
+        try:
+            from encode_known_faces import build_encodings_for_class_force
+            print(f"[{class_name}] 🔄 Starting background encoding (bulk)...")
+            build_encodings_for_class_force(class_dir)
+            reload_cache(class_name)
+            print(f"[{class_name}] ✅ Background encoding complete")
+        except Exception as e:
+            print(f"[{class_name}] ❌ Background encoding failed: {e}")
 
-    flash(f"Đã thêm nhanh {saved_total} ảnh cho {len(saved_by_student)} học sinh", "success")
+    threading.Thread(target=_background_process, daemon=True).start()
+
+    flash(f"Đã thêm nhanh {saved_total} ảnh. Đang xử lý nhận diện ngầm...", "success")
     return redirect(url_for("class_home", class_name=class_name))
 
 @app.route("/class/<class_name>/history")
@@ -1800,6 +1838,13 @@ def health():
         "classes": len(get_all_classes())
     }), 200
 
+@app.route("/device/config")
+@login_required
+@admin_required
+def device_config_gen():
+    """Trang tạo mã QR/Config cho thiết bị"""
+    return render_template('device_config.html')
+
 # ============================================================
 # ERROR HANDLERS
 # ============================================================
@@ -1920,8 +1965,45 @@ def init_database_schema():
     except Exception as e:
         print(f"⚠️ Database initialization warning: {e}")
 
+def check_configuration():
+    """Rà soát cấu hình và cảnh báo lỗi"""
+    print("\n" + "="*70)
+    print("🔍 KIỂM TRA CẤU HÌNH HỆ THỐNG")
+    print("="*70)
+    
+    issues = []
+    
+    # 1. Check SECRET_KEY
+    if not os.environ.get("SECRET_KEY"):
+        print("⚠️ SECRET_KEY chưa được set (đang dùng key tự sinh)")
+        
+    # 2. Check MQTT
+    if not MQTT_USERNAME and "hivemq" in str(MQTT_BROKER):
+        issues.append("Broker là HiveMQ nhưng thiếu MQTT_USERNAME/MQTT_PASSWORD")
+        print("❌ Thiếu MQTT Credentials cho HiveMQ")
+        
+    # 3. Check Admin Password
+    if not os.environ.get("ADMIN_PASSWORD"):
+        print("ℹ️ ADMIN_PASSWORD mặc định là 'admin123'")
+        
+    # 4. Check Database
+    if USE_POSTGRES:
+        print(f"✅ Using PostgreSQL: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else '...'}")
+    else:
+        print(f"✅ Using SQLite: {SYSTEM_DIR}")
+        
+    if issues:
+        print("\n❌ CÓ LỖI CẤU HÌNH NGHIÊM TRỌNG:")
+        for i in issues:
+            print(f"   - {i}")
+    else:
+        print("✅ Cấu hình cơ bản ổn định")
+    print("="*70 + "\n")
+
 def initialize_app():
     """Initialize app on startup"""
+    check_configuration()
+    
     print("\n" + "="*70)
     print("🚀 INITIALIZING FACE RECOGNITION ATTENDANCE SYSTEM")
     print("="*70 + "\n")

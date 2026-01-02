@@ -6,45 +6,42 @@
 <div class="min-h-[80vh] flex items-center justify-center py-12">
     <div class="w-full max-w-md">
         <!-- Logo & Title -->
-        <div class="text-center mb-8 animate-fade-in">
-            <div class="inline-block relative mb-6">
-                <div class="w-20 h-20 bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl shadow-2xl flex items-center justify-center transform hover:rotate-6 transition-transform duration-300">
+        <div class="text-center mb-8">
+            <div class="inline-block relative mb-4">
+                <div class="w-16 h-16 bg-blue-600 rounded-lg shadow-md flex items-center justify-center">
                     <i class="fas fa-user-lock text-white text-3xl"></i>
                 </div>
-                <div class="absolute -bottom-2 -right-2 w-8 h-8 bg-green-500 rounded-full border-4 border-white shadow-lg"></div>
             </div>
-            <h1 class="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
+            <h1 class="text-2xl font-bold text-slate-800 mb-1">
                 Chào mừng trở lại
             </h1>
             <p class="text-slate-500">Đăng nhập để tiếp tục sử dụng hệ thống</p>
         </div>
 
         <!-- Login Form -->
-        <div class="glass-effect rounded-3xl shadow-2xl p-8 border border-white/20">
+        <div class="bg-white rounded-lg shadow-md border border-slate-200 p-8">
             <form method="POST" class="space-y-6">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <!-- Username -->
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-2">
-                        <i class="fas fa-user text-blue-500 mr-2"></i>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">
                         Tên đăng nhập
                     </label>
                     <div class="relative">
                         <input 
                             type="text" 
                             name="username" 
-                            class="w-full px-4 py-3 pl-12 rounded-xl border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+                            class="w-full px-4 py-2 pl-10 rounded border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
                             placeholder="Nhập tên đăng nhập"
                             required
                         >
-                        <i class="fas fa-user absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                        <i class="fas fa-user absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
                     </div>
                 </div>
 
                 <!-- Password -->
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-2">
-                        <i class="fas fa-lock text-blue-500 mr-2"></i>
+                    <label class="block text-sm font-bold text-slate-700 mb-2">
                         Mật khẩu
                     </label>
                     <div class="relative">
@@ -52,69 +49,44 @@
                             type="password" 
                             name="password"
                             id="password"
-                            class="w-full px-4 py-3 pl-12 pr-12 rounded-xl border-2 border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+                            class="w-full px-4 py-2 pl-10 pr-10 rounded border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
                             placeholder="Nhập mật khẩu"
                             required
                         >
-                        <i class="fas fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                        <button 
-                            type="button"
-                            onclick="togglePassword()"
-                            class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                        >
+                        <i class="fas fa-lock absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                        <button type="button" onclick="togglePassword()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                             <i class="fas fa-eye" id="toggleIcon"></i>
                         </button>
                     </div>
                 </div>
 
-                <!-- Submit Button -->
                 <button 
                     type="submit"
-                    class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white py-4 rounded-xl font-bold text-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded font-bold transition-all duration-200 shadow-sm"
                 >
-                    <i class="fas fa-sign-in-alt mr-2"></i>
                     Đăng nhập
                 </button>
             </form>
-
+            
             <!-- Info Box -->
-            <div class="mt-8 pt-6 border-t border-slate-200">
-                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+            <div class="mt-6 pt-6 border-t border-slate-200">
+                <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
                     <div class="flex items-start gap-3">
-                        <i class="fas fa-info-circle text-blue-600 text-xl mt-0.5"></i>
+                        <i class="fas fa-info-circle text-blue-600 text-lg mt-0.5"></i>
                         <div>
-                            <p class="font-semibold text-blue-800 mb-1">Tài khoản mặc định</p>
+                            <p class="font-bold text-blue-800 text-sm mb-1">Tài khoản mặc định</p>
                             <div class="text-sm text-blue-700 space-y-1">
-                                <p><span class="font-mono bg-blue-100 px-2 py-0.5 rounded">admin</span> / <span class="font-mono bg-blue-100 px-2 py-0.5 rounded">admin123</span></p>
-                                <p class="text-xs text-blue-600 mt-2">⚠️ Đổi mật khẩu sau khi đăng nhập lần đầu</p>
+                                <p><span class="font-mono bg-white px-2 py-0.5 rounded border border-blue-200">admin</span> / <span class="font-mono bg-white px-2 py-0.5 rounded border border-blue-200">admin123</span></p>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-
-        <!-- Features -->
-        <div class="mt-8 grid grid-cols-3 gap-4">
-            <div class="text-center">
-                <div class="w-12 h-12 bg-green-100 rounded-xl mx-auto mb-2 flex items-center justify-center">
-                    <i class="fas fa-shield-alt text-green-600"></i>
-                </div>
-                <p class="text-xs text-slate-600">Bảo mật</p>
-            </div>
-            <div class="text-center">
-                <div class="w-12 h-12 bg-blue-100 rounded-xl mx-auto mb-2 flex items-center justify-center">
-                    <i class="fas fa-bolt text-blue-600"></i>
-                </div>
-                <p class="text-xs text-slate-600">Nhanh chóng</p>
-            </div>
-            <div class="text-center">
-                <div class="w-12 h-12 bg-purple-100 rounded-xl mx-auto mb-2 flex items-center justify-center">
-                    <i class="fas fa-robot text-purple-600"></i>
-                </div>
-                <p class="text-xs text-slate-600">AI-Powered</p>
-            </div>
-        </div>
+        
+        <p class="text-center text-sm text-slate-400 mt-8">
+            &copy; 2024 Hệ thống điểm danh thông minh
+        </p>
     </div>
 </div>
 
@@ -122,7 +94,6 @@
 function togglePassword() {
     const input = document.getElementById('password');
     const icon = document.getElementById('toggleIcon');
-    
     if (input.type === 'password') {
         input.type = 'text';
         icon.classList.remove('fa-eye');
