@@ -2132,32 +2132,12 @@ _migrate_legacy_db("users.db")
 _migrate_legacy_db("api_keys.db")
 initialize_app()
 
-if __name__ == "__main__":
-    def signal_handler(sig, frame):
-        print('\n🛑 Shutting down gracefully...')
-        if mqtt_client:
-            mqtt_client.disconnect()
-            print('✅ MQTT disconnected')
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    # Development mode
+if __name__ == '__main__':
+    import os
     port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    local_ip = get_local_ip()
-    print(f"\n🌐 Starting Flask server on {local_ip}:{port}")
-    print(f"🔧 Debug mode: {debug}\n")
+    # Render dùng 0.0.0.0, local dùng IP thật
+    host = '0.0.0.0' if os.environ.get('RENDER') else get_local_ip()
     
-    try:
-        socketio.run(app, host=local_ip, port=port, debug=debug, use_reloader=debug)
-    except OSError as e:
-        if e.errno == 48:  # Address already in use
-            fallback_port = 5001 if port == 5000 else port + 1
-            print(f"\n⚠️  Cổng {port} đã bị chiếm dụng (thông thường do dịch vụ AirPlay của macOS).")
-            print(f"🔄 Tự động chuyển sang cổng dự phòng: {fallback_port} trên {local_ip}\n")
-            socketio.run(app, host=local_ip, port=fallback_port, debug=debug, use_reloader=debug)
-        else:
-            raise e
+    print(f"🚀 Server running on http://{host}:{port}")
+    socketio.run(app, host=host, port=port, debug=False)

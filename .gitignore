@@ -1,9 +1,70 @@
+# ==================== DỮ LIỆU NHẠY CẢM (KHÔNG COMMIT) ====================
+classes/
+
+# Giữ lại placeholder để git track cấu trúc thư mục
+!classes/.gitkeep
+!classes/_system/.gitkeep
+!classes/DS/.gitkeep
+
+# ==================== PYTHON ====================
 __pycache__/
+*.py[cod]
+*$py.class
 *.pyc
-*.db
-*.pkl
-*.npz
-*.jpg
+*.pyo
+env/
 venv/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# ==================== DATABASE ====================
+*.db
+*.sqlite
+*.sqlite3
+
+# ==================== FACE RECOGNITION DATA ====================
+encodings.pkl
+encodings.npz
+encodings_meta.json
+
+# ==================== UPLOADED IMAGES ====================
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.webp
+!docs/**/*.png
+!docs/**/*.jpg
+
+# ==================== CREDENTIALS & SECRETS ====================
 .env
+.env.local
+.env.production
+*.secret
+*_password
+*_secret_key
+flask_secret_key
+admin_password
+mqtt.lock
+
+# ==================== macOS ====================
 .DS_Store
+.AppleDouble
+._*
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+*.swp
+*~
+
+# ==================== LOGS ====================
+*.log
+logs/
+
+# ==================== ARDUINO BUILD ====================
+esp32-8/.pio/
+esp32-8/build/
