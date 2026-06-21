@@ -8,11 +8,11 @@
     <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-            <h2 class="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                <i class="fas fa-key text-blue-600"></i>
+            <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+                <i class="fas fa-key text-blue-400"></i>
                 Quản lý API Keys
             </h2>
-            <p class="text-slate-500 mt-1">Tạo và quản lý API keys cho các thiết bị ESP32</p>
+            <p class="text-slate-400 mt-1">Tạo và quản lý API keys cho các thiết bị ESP32</p>
         </div>
         <button 
             onclick="toggleCreateForm()" 
@@ -27,11 +27,11 @@
     <div id="createForm" class="hidden">
         <div class="classic-card p-6">
             <div class="flex items-center justify-between mb-6">
-                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <i class="fas fa-plus-circle text-blue-600"></i>
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fas fa-plus-circle text-blue-400"></i>
                     Tạo API Key mới
                 </h3>
-                <button onclick="toggleCreateForm()" class="text-slate-400 hover:text-slate-600">
+                <button onclick="toggleCreateForm()" class="text-slate-400 hover:text-slate-200">
                     <i class="fas fa-times text-xl"></i>
                 </button>
             </div>
@@ -42,8 +42,8 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <!-- Class Selection -->
                     <div>
-                        <label class="block text-sm font-semibold text-slate-700 mb-2">
-                            <i class="fas fa-graduation-cap text-blue-600 mr-2"></i>
+                        <label class="block text-sm font-semibold text-slate-300 mb-2">
+                            <i class="fas fa-graduation-cap text-blue-400 mr-2"></i>
                             Lớp học *
                         </label>
                         <select 
@@ -56,13 +56,13 @@
                             <option value="{{ class_name }}">{{ class_name }}</option>
                             {% endfor %}
                         </select>
-                        <p class="text-xs text-slate-500 mt-1">Chỉ hiển thị lớp đã tải lên danh sách</p>
+                        <p class="text-xs text-slate-400 mt-1">Chỉ hiển thị lớp đã tải lên danh sách</p>
                     </div>
 
                     <!-- Device Name -->
                     <div>
-                        <label class="block text-sm font-semibold text-slate-700 mb-2">
-                            <i class="fas fa-microchip text-green-600 mr-2"></i>
+                        <label class="block text-sm font-semibold text-slate-300 mb-2">
+                            <i class="fas fa-microchip text-green-400 mr-2"></i>
                             Tên thiết bị
                         </label>
                         <input 
@@ -71,7 +71,7 @@
                             placeholder="ESP32-CAM-01"
                             class="w-full px-4 py-2 rounded border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
                         >
-                        <p class="text-xs text-slate-500 mt-1">Tùy chọn: Đặt tên để dễ nhận biết</p>
+                        <p class="text-xs text-slate-400 mt-1">Tùy chọn: Đặt tên để dễ nhận biết</p>
                     </div>
                 </div>
 
@@ -86,7 +86,7 @@
                     <button 
                         type="button"
                         onclick="toggleCreateForm()"
-                        class="px-6 py-2 bg-slate-100 text-slate-700 rounded border border-slate-300 hover:bg-slate-200 font-medium transition-colors"
+                        class="px-6 py-2 bg-white/5 text-slate-300 rounded border border-white/10 hover:bg-white/10 font-medium transition-colors"
                     >
                         Hủy
                     </button>
@@ -94,15 +94,15 @@
             </form>
             {% else %}
             <!-- No Classes Warning -->
-            <div class="bg-amber-50 border-l-4 border-amber-500 p-4">
+            <div class="bg-amber-500/10 border-l-4 border-amber-500 p-4 rounded-r-xl">
                 <div class="flex items-start gap-4">
-                    <i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-1"></i>
+                    <i class="fas fa-exclamation-triangle text-amber-400 text-xl mt-1"></i>
                     <div>
-                        <h4 class="font-bold text-amber-900 mb-1">Chưa có lớp học</h4>
-                        <p class="text-sm text-amber-800">
+                        <h4 class="font-bold text-amber-300 mb-1">Chưa có lớp học</h4>
+                        <p class="text-sm text-amber-200">
                             Bạn cần tạo ít nhất một lớp học trước khi tạo API Key.
                         </p>
-                        <a href="{{ url_for('manage_classes') }}" class="text-sm font-semibold text-amber-700 hover:text-amber-900 mt-2 inline-block">
+                        <a href="{{ url_for('manage_classes') }}" class="text-sm font-semibold text-amber-300 hover:text-amber-100 mt-2 inline-block">
                             Đi đến Quản lý lớp học <i class="fas fa-arrow-right ml-1"></i>
                         </a>
                     </div>
@@ -114,37 +114,37 @@
 
     <!-- API Keys List -->
     <div class="classic-card overflow-hidden">
-        {% if api_keys %}
+        {% if keys %}
         <div class="overflow-x-auto">
             <table class="w-full">
-                <thead class="bg-slate-50 border-b border-slate-200">
+                <thead class="bg-slate-900/30 border-b border-white/10" style="backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
                     <tr>
-                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Thiết bị</th>
-                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Lớp học</th>
-                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">API Key</th>
-                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Ngày tạo</th>
-                        <th class="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Thao tác</th>
+                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Thiết bị</th>
+                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Lớp học</th>
+                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">API Key</th>
+                        <th class="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Ngày tạo</th>
+                        <th class="px-6 py-3 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">Thao tác</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-200">
-                    {% for key in api_keys %}
-                    <tr class="hover:bg-slate-50 transition-colors">
+                <tbody class="divide-y divide-white/5">
+                    {% for key in keys %}
+                    <tr class="hover:bg-white/5 transition-colors">
                         <td class="px-6 py-4">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 bg-slate-100 rounded flex items-center justify-center border border-slate-200">
-                                    <i class="fas fa-microchip text-slate-500"></i>
+                                <div class="w-8 h-8 bg-white/5 rounded flex items-center justify-center border border-white/10">
+                                    <i class="fas fa-microchip text-slate-400"></i>
                                 </div>
-                                <span class="font-medium text-slate-800">{{ key.device_name or 'Unnamed Device' }}</span>
+                                <span class="font-medium text-white">{{ key.device_name or 'Unnamed Device' }}</span>
                             </div>
                         </td>
                         <td class="px-6 py-4">
-                            <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                            <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">
                                 {{ key.class_name }}
                             </span>
                         </td>
                         <td class="px-6 py-4">
                             <div class="flex items-center gap-2 group">
-                                <code class="font-mono text-xs bg-slate-100 px-2 py-1 rounded border border-slate-300 text-slate-600">{{ key.key[:8] }}...{{ key.key[-4:] }}</code>
+                                <code class="font-mono text-xs bg-white/5 px-2 py-1 rounded border border-white/10 text-slate-300">{{ key.key[:8] }}...{{ key.key[-4:] }}</code>
                                 <button 
                                     onclick="copyToClipboard('{{ key.key }}')"
                                     class="text-slate-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -154,13 +154,13 @@
                                 </button>
                             </div>
                         </td>
-                        <td class="px-6 py-4 text-sm text-slate-500">
+                        <td class="px-6 py-4 text-sm text-slate-400">
                             {{ key.created_at }}
                         </td>
                         <td class="px-6 py-4 text-right">
-                            <form method="POST" action="/api_keys/revoke/{{ key.key }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn thu hồi API Key này? Thiết bị sẽ không thể kết nối nữa.');">
+                            <form method="POST" action="/api_keys/delete/{{ key.id }}" class="inline" onsubmit="return confirm('Bạn có chắc muốn thu hồi API Key này? Thiết bị sẽ không thể kết nối nữa.');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="text-red-600 hover:text-red-800 font-medium text-sm inline-flex items-center gap-1">
+                                <button type="submit" class="text-red-400 hover:text-red-300 font-medium text-sm inline-flex items-center gap-1">
                                     <i class="fas fa-trash"></i> Thu hồi
                                 </button>
                             </form>
@@ -171,12 +171,12 @@
             </table>
         </div>
         {% else %}
-        <div class="p-12 text-center">
-            <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-200">
+        <div class="classic-card p-8 text-center">
+            <div class="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/10">
                 <i class="fas fa-key text-slate-400 text-3xl"></i>
             </div>
-            <h3 class="text-lg font-bold text-slate-800 mb-2">Chưa có API Key nào</h3>
-            <p class="text-slate-500">Tạo API Key để kết nối thiết bị ESP32 với hệ thống.</p>
+            <h3 class="text-lg font-bold text-white mb-2">Chưa có API Key nào</h3>
+            <p class="text-slate-400">Tạo API Key để kết nối thiết bị ESP32 với hệ thống.</p>
         </div>
         {% endif %}
     </div>

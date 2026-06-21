@@ -128,7 +128,6 @@ def _build_encodings_internal(class_dir: str, force_rebuild: bool) -> Dict[str, 
         
         if not image_files:
             print(f"   ⚠️ Không có file ảnh!")
-            processed_names.add(name)  # ✅ Vẫn đánh dấu
             continue
         
         print(f"   📷 Tìm thấy {len(image_files)} file ảnh")

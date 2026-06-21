@@ -1,47 +1,46 @@
 {% extends "base.html" %}
 
-{% block title %}Đăng nhập{% endblock %}
+{% block title %}Đăng nhập - Hệ thống điểm danh{% endblock %}
 
 {% block content %}
-<div class="min-h-[80vh] flex items-center justify-center py-12">
-    <div class="w-full max-w-md">
+<div class="min-h-[75vh] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div class="w-full max-w-md space-y-8 animate-fade-in">
         <!-- Logo & Title -->
-        <div class="text-center mb-8">
-            <div class="inline-block relative mb-4">
-                <div class="w-16 h-16 bg-blue-600 rounded-lg shadow-md flex items-center justify-center">
-                    <i class="fas fa-user-lock text-white text-3xl"></i>
-                </div>
+        <div class="text-center">
+            <div class="inline-flex p-4 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 shadow-xl shadow-blue-500/25 mb-4 hover:scale-105 transition-transform duration-300">
+                <i class="fas fa-shield-halved text-white text-3xl"></i>
             </div>
-            <h1 class="text-2xl font-bold text-slate-800 mb-1">
+            <h1 class="text-3xl font-extrabold tracking-tight text-white">
                 Chào mừng trở lại
             </h1>
-            <p class="text-slate-500">Đăng nhập để tiếp tục sử dụng hệ thống</p>
+            <p class="text-slate-400 text-sm mt-2 font-medium">Đăng nhập vào hệ thống điểm danh thông minh</p>
         </div>
 
-        <!-- Login Form -->
-        <div class="bg-white rounded-lg shadow-md border border-slate-200 p-8">
+        <!-- Login Form Card -->
+        <div class="classic-card p-8 bg-gradient-to-b from-slate-900/60 to-slate-950/60 shadow-2xl relative">
             <form method="POST" class="space-y-6">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
                 <!-- Username -->
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                <div class="space-y-2">
+                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
                         Tên đăng nhập
                     </label>
                     <div class="relative">
                         <input 
                             type="text" 
                             name="username" 
-                            class="w-full px-4 py-2 pl-10 rounded border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
-                            placeholder="Nhập tên đăng nhập"
+                            class="w-full px-4 py-3 pl-10 rounded-xl bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all duration-300 text-sm"
+                            placeholder="Nhập tên tài khoản"
                             required
                         >
-                        <i class="fas fa-user absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                        <i class="fas fa-user absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></i>
                     </div>
                 </div>
 
                 <!-- Password -->
-                <div>
-                    <label class="block text-sm font-bold text-slate-700 mb-2">
+                <div class="space-y-2">
+                    <label class="block text-xs font-bold text-slate-300 uppercase tracking-wider">
                         Mật khẩu
                     </label>
                     <div class="relative">
@@ -49,34 +48,40 @@
                             type="password" 
                             name="password"
                             id="password"
-                            class="w-full px-4 py-2 pl-10 pr-10 rounded border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+                            class="w-full px-4 py-3 pl-10 pr-10 rounded-xl bg-slate-950/60 border border-white/10 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all duration-300 text-sm"
                             placeholder="Nhập mật khẩu"
                             required
                         >
-                        <i class="fas fa-lock absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                        <button type="button" onclick="togglePassword()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                            <i class="fas fa-eye" id="toggleIcon"></i>
+                        <i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 text-sm"></i>
+                        <button type="button" onclick="togglePassword()" class="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors">
+                            <i class="fas fa-eye text-sm" id="toggleIcon"></i>
                         </button>
                     </div>
                 </div>
 
+                <!-- Submit Button -->
                 <button 
                     type="submit"
-                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded font-bold transition-all duration-200 shadow-sm"
+                    class="w-full classic-btn py-3 text-sm font-bold shadow-lg shadow-blue-500/20 rounded-xl"
                 >
-                    Đăng nhập
+                    <i class="fas fa-right-to-bracket mr-2"></i>
+                    Đăng nhập hệ thống
                 </button>
             </form>
             
-            <!-- Info Box -->
-            <div class="mt-6 pt-6 border-t border-slate-200">
-                <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                    <div class="flex items-start gap-3">
-                        <i class="fas fa-info-circle text-blue-600 text-lg mt-0.5"></i>
+            <!-- Default Account Info Box -->
+            <div class="mt-6 pt-6 border-t border-white/5">
+                <div class="bg-indigo-500/5 rounded-xl p-4 border border-indigo-500/10">
+                    <div class="flex gap-3">
+                        <i class="fas fa-circle-info text-indigo-400 text-base mt-0.5"></i>
                         <div>
-                            <p class="font-bold text-blue-800 text-sm mb-1">Tài khoản mặc định</p>
-                            <div class="text-sm text-blue-700 space-y-1">
-                                <p><span class="font-mono bg-white px-2 py-0.5 rounded border border-blue-200">admin</span> / <span class="font-mono bg-white px-2 py-0.5 rounded border border-blue-200">admin123</span></p>
+                            <p class="font-bold text-indigo-300 text-xs uppercase tracking-wider">Tài khoản mặc định</p>
+                            <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                                Tài khoản quản trị để đăng nhập ban đầu:
+                            </p>
+                            <div class="mt-2 text-xs flex flex-col gap-1.5 text-slate-300 font-mono">
+                                <span>Tài khoản: <strong class="text-white bg-white/5 px-2 py-0.5 rounded border border-white/5">admin</strong></span>
+                                <span>Mật khẩu: Xem file <strong class="text-white bg-white/5 px-2 py-0.5 rounded border border-white/5">classes/_system/admin_password</strong></span>
                             </div>
                         </div>
                     </div>
@@ -84,8 +89,8 @@
             </div>
         </div>
         
-        <p class="text-center text-sm text-slate-400 mt-8">
-            &copy; 2024 Hệ thống điểm danh thông minh
+        <p class="text-center text-xs text-slate-500">
+            Hệ thống điểm danh thông minh &copy; 2024
         </p>
     </div>
 </div>

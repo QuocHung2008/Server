@@ -7,26 +7,26 @@
 <div class="max-w-3xl mx-auto space-y-6">
     <!-- Header -->
     <div class="text-center">
-        <div class="inline-flex p-4 bg-green-100 rounded-full mb-4 border border-green-200">
-            <i class="fas fa-user-plus text-3xl text-green-600"></i>
+        <div class="inline-flex p-4 bg-green-500/20 rounded-full mb-4 border border-green-500/30">
+            <i class="fas fa-user-plus text-3xl text-green-400"></i>
         </div>
-        <h2 class="text-2xl font-bold text-slate-800">Thêm dữ liệu khuôn mặt</h2>
-        <p class="text-slate-500 mt-2">Lớp {{ class_name }}</p>
+        <h2 class="text-2xl font-bold text-white">Thêm dữ liệu khuôn mặt</h2>
+        <p class="text-slate-400 mt-2">Lớp {{ class_name }}</p>
     </div>
 
     {% if students|length == 0 %}
     <!-- No Students Warning -->
-    <div class="classic-card p-6 border-l-4 border-l-amber-500 bg-amber-50">
+    <div class="classic-card p-6 border-l-4 border-l-amber-500 bg-amber-500/10">
         <div class="flex items-start gap-4">
-            <i class="fas fa-exclamation-triangle text-amber-500 text-xl mt-1"></i>
+            <i class="fas fa-exclamation-triangle text-amber-400 text-xl mt-1"></i>
             <div>
-                <h3 class="font-bold text-slate-800 mb-2">Chưa có danh sách học sinh</h3>
-                <p class="text-slate-600 text-sm">
-                    Vui lòng tải lên file <code class="bg-amber-100 px-2 py-0.5 rounded border border-amber-200">DS_{{ class_name }}.xlsx</code> 
+                <h3 class="font-bold text-white mb-2">Chưa có danh sách học sinh</h3>
+                <p class="text-slate-300 text-sm">
+                    Vui lòng tải lên file <code class="bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30 text-amber-300">DS_{{ class_name }}.xlsx</code> 
                     vào thư mục classes/DS/
                 </p>
                 <a href="{{ url_for('manage_classes') }}" 
-                   class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-amber-700 hover:text-amber-900">
+                   class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-amber-300 hover:text-amber-100">
                     <i class="fas fa-arrow-right"></i>
                     Quản lý danh sách lớp
                 </a>
@@ -36,13 +36,13 @@
     {% else %}
     
     <div class="classic-card">
-        <div class="p-6 border-b border-slate-200 bg-slate-50">
-            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <i class="fas fa-folder-open text-blue-600"></i>
+        <div class="p-6 border-b border-white/5 bg-white/5">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="fas fa-folder-open text-blue-400"></i>
                 Thêm nhanh theo folder (.zip)
             </h3>
-            <p class="text-sm text-slate-600 mt-1">
-                Cấu trúc zip: <span class="font-mono bg-slate-100 px-1 rounded">STUDENT_ID/anh1.jpg</span>, <span class="font-mono bg-slate-100 px-1 rounded">STUDENT_ID/anh2.jpg</span>...
+            <p class="text-sm text-slate-400 mt-1">
+                Cấu trúc zip: <span class="font-mono bg-white/5 px-1 rounded text-slate-300">STUDENT_ID/anh1.jpg</span>, <span class="font-mono bg-white/5 px-1 rounded text-slate-300">STUDENT_ID/anh2.jpg</span>...
             </p>
         </div>
         <form method="POST" action="{{ url_for('bulk_upload_students', class_name=class_name) }}" enctype="multipart/form-data" class="p-6 space-y-4">
@@ -57,9 +57,9 @@
 
     <!-- Main Form -->
     <div class="classic-card">
-        <div class="p-6 border-b border-slate-200 bg-slate-50">
-            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <i class="fas fa-camera text-green-600"></i>
+        <div class="p-6 border-b border-white/5 bg-white/5">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="fas fa-camera text-green-400"></i>
                 Thông tin học sinh
             </h3>
         </div>
@@ -68,8 +68,8 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <!-- Student Selection -->
             <div>
-                <label class="block text-sm font-semibold text-slate-700 mb-2">
-                    <i class="fas fa-user text-blue-600 mr-2"></i>
+                <label class="block text-sm font-semibold text-slate-300 mb-2">
+                    <i class="fas fa-user text-blue-400 mr-2"></i>
                     Chọn học sinh *
                 </label>
                 <select 
@@ -87,14 +87,14 @@
                 </select>
                 
                 <!-- Student Info Display -->
-                <div id="studentInfo" class="hidden mt-4 bg-blue-50 border-l-4 border-blue-500 rounded p-4">
+                <div id="studentInfo" class="hidden mt-4 bg-blue-500/10 border-l-4 border-blue-500 rounded p-4">
                     <div class="flex items-center gap-4">
-                        <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center border border-blue-200">
-                            <span class="text-blue-700 font-bold text-lg" id="displayInitial">?</span>
+                        <div class="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center border border-blue-500/30">
+                            <span class="text-blue-300 font-bold text-lg" id="displayInitial">?</span>
                         </div>
                         <div>
-                            <p class="text-sm text-blue-600 font-medium">Đã chọn</p>
-                            <p class="font-bold text-slate-800"><span id="displayId"></span> - <span id="displayName"></span></p>
+                            <p class="text-sm text-blue-400 font-medium">Đã chọn</p>
+                            <p class="font-bold text-white"><span id="displayId"></span> - <span id="displayName"></span></p>
                         </div>
                     </div>
                 </div>
@@ -102,15 +102,15 @@
 
             <!-- Image Upload -->
             <div>
-                <label class="block text-sm font-semibold text-slate-700 mb-2">
-                    <i class="fas fa-images text-purple-600 mr-2"></i>
+                <label class="block text-sm font-semibold text-slate-300 mb-2">
+                    <i class="fas fa-images text-purple-400 mr-2"></i>
                     Ảnh mẫu (5-10 ảnh) *
                 </label>
-                <div class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:bg-slate-50 transition-colors cursor-pointer" onclick="document.getElementById('imageInput').click()">
-                    <input type="file" id="imageInput" name="files[]" multiple accept="image/*" class="hidden" onchange="previewImages(event)" required>
-                    <i class="fas fa-cloud-upload-alt text-4xl text-slate-400 mb-3"></i>
-                    <p class="text-sm text-slate-600 font-medium">Click để chọn ảnh hoặc kéo thả vào đây</p>
-                    <p class="text-xs text-slate-400 mt-1">Hỗ trợ JPG, PNG</p>
+                <div class="border-2 border-dashed border-white/10 rounded-lg p-6 text-center hover:bg-white/5 transition-colors cursor-pointer" onclick="document.getElementById('imageInput').click()">
+                    <input type="file" id="imageInput" name="images" multiple accept="image/*" class="hidden" onchange="previewImages(event)" required>
+                    <i class="fas fa-cloud-upload-alt text-4xl text-slate-500 mb-3"></i>
+                    <p class="text-sm text-slate-300 font-medium">Click để chọn ảnh hoặc kéo thả vào đây</p>
+                    <p class="text-xs text-slate-500 mt-1">Hỗ trợ JPG, PNG</p>
                 </div>
                 
                 <!-- Preview Grid -->
@@ -156,7 +156,7 @@
 
                 reader.onload = function(e) {
                     const div = document.createElement('div');
-                    div.className = 'relative aspect-square rounded overflow-hidden border border-slate-200';
+                    div.className = 'relative aspect-square rounded overflow-hidden border border-white/10';
                     div.innerHTML = `
                         <img src="${e.target.result}" class="w-full h-full object-cover">
                         <div class="absolute inset-0 bg-black/10"></div>

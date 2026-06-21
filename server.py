@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, flash, session, abort
+from flask_socketio import SocketIO, emit, join_room
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -13,6 +14,19 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 import zipfile
+import socket
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.environ.get("BASE_DIR") or os.path.join(PROJECT_ROOT, "classes")
@@ -21,6 +35,14 @@ SYSTEM_DIR = os.environ.get("SYSTEM_DIR") or os.path.join(BASE_DIR, "_system")
 TOLERANCE, DETECTION_MODEL = 0.5, "hog"
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+@socketio.on('join')
+def on_join(data):
+    room = data.get('room')
+    if room:
+        join_room(room)
+        print(f"🔌 [Socket.IO] Client joined room: {room}")
 
 def _abs_path(path: str) -> str:
     return os.path.abspath(path)
@@ -107,7 +129,7 @@ MQTT_TLS_INSECURE = os.environ.get("MQTT_TLS_INSECURE", "").lower() in ("1", "tr
 MQTT_CA_CERT_PATH = os.environ.get("MQTT_CA_CERT_PATH", "").strip()
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-USE_POSTGRES = DATABASE_URL.lower().startswith(("postgresql://postgres:AIpSImkjjSgxVPNftBYcImlnhbZnpqah@postgres.railway.internal:5432/railway"))
+USE_POSTGRES = DATABASE_URL.lower().startswith(("postgresql://", "postgres://"))
 PG_POOL = None
 
 # Global variables
@@ -806,7 +828,17 @@ def manage_api_keys():
         try:
             c = conn.cursor()
             db_execute(c, "SELECT id, api_key, class_name, device_name, created_at, is_active FROM api_keys ORDER BY created_at DESC")
-            keys = c.fetchall()
+            rows = c.fetchall()
+            keys = []
+            for r in rows:
+                keys.append({
+                    "id": r[0],
+                    "key": r[1],
+                    "class_name": r[2],
+                    "device_name": r[3],
+                    "created_at": r[4],
+                    "is_active": r[5]
+                })
         finally:
             conn.close()
         return render_template('api_keys.html', keys=keys, available_classes=available_classes)
@@ -944,7 +976,7 @@ def reload_cache(class_name):
         with ENCODINGS_LOCK:
             ENCODINGS_CACHE[class_name] = data
 
-def record_attendance(class_name, student_id):
+def record_attendance(class_name, student_id, device_id="Unknown", image_url=None):
     student_name = get_student_name(class_name, student_id)
     lock = LOCKS.setdefault(class_name, threading.Lock())
     with lock:
@@ -972,10 +1004,24 @@ def record_attendance(class_name, student_id):
                                 VALUES(?,?,?,?,?,?)""",
                              (student_id, student_name, today, time_str, status, iso))
                 conn.commit()
+                
+                # Phát sự kiện Socket.IO cập nhật real-time
+                try:
+                    socketio.emit('attendance_update', {
+                        'class_name': class_name,
+                        'student_id': student_id,
+                        'name': student_name,
+                        'time': time_str,
+                        'device_id': device_id or 'Unknown',
+                        'image_url': image_url or ''
+                    }, room=class_name)
+                    print(f"🔌 [Socket.IO] Phát thành công attendance_update cho {student_name} ({student_id})")
+                except Exception as se:
+                    print(f"⚠️ Lỗi phát Socket.IO: {se}")
         finally:
             conn.close()
 
-def recognize_face_from_image(class_name: str, img_bytes: bytes):
+def recognize_face_from_image(class_name: str, img_bytes: bytes, device_id: str = "Unknown", image_url: str = None):
     start_time = time.time()
     
     cv2_lib, np_lib = lazy_load_cv2()
@@ -1019,7 +1065,7 @@ def recognize_face_from_image(class_name: str, img_bytes: bytes):
         if float(dist[best]) <= float(TOLERANCE):
             student_id = data["names"][best]
             recognized_name = get_student_name(class_name, student_id)
-            threading.Thread(target=record_attendance, args=(class_name, student_id), daemon=True).start()
+            threading.Thread(target=record_attendance, args=(class_name, student_id, device_id, image_url), daemon=True).start()
     
     elapsed = time.time() - start_time
     print(f"[{class_name}] ✅ {recognized_name} | {elapsed:.3f}s")
@@ -1213,9 +1259,45 @@ def init_mqtt():
                             img_bytes = base64.b64decode(base64_image, validate=True)
                         except Exception:
                             img_bytes = base64.b64decode(base64_image)
-                        recognized_name = recognize_face_from_image(class_name, img_bytes)
+                        
+                        device_id = (meta.get("device_id") or "MQTT-CAM").strip()
+                        
+                        # Lưu ảnh local và upload cloud nếu có cấu hình
+                        cloud_url = None
+                        try:
+                            class_dir = ensure_class_structure(class_name)
+                            last_path = os.path.join(class_dir, "last_upload.jpg")
+                            with open(last_path, "wb") as f:
+                                f.write(img_bytes)
+                            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            object_path = _cloud_key("captures", class_name, f"{ts}_{device_id or 'unknown'}.jpg")
+                            cloud_url = _maybe_upload_to_supabase(last_path, object_path)
+                            if cloud_url and CLOUD_DELETE_LOCAL_AFTER_UPLOAD:
+                                try:
+                                    os.remove(last_path)
+                                except Exception:
+                                    pass
+                        except Exception as file_err:
+                            print(f"⚠️ Không thể lưu ảnh MQTT: {file_err}")
+
+                        recognized_name = recognize_face_from_image(class_name, img_bytes, device_id=device_id, image_url=cloud_url)
+                        
+                        # Lưu file meta json
+                        try:
+                            with open(os.path.join(class_dir, "last_upload.json"), "w", encoding="utf-8") as f:
+                                json.dump(
+                                    {
+                                        "ts": datetime.datetime.now().isoformat(sep=" ", timespec="seconds"),
+                                        "device_id": device_id,
+                                        "name": recognized_name,
+                                        "cloud_url": cloud_url,
+                                    },
+                                    f,
+                                )
+                        except Exception:
+                            pass
+
                         result_json = json.dumps({"name": recognized_name})
-                        device_id = (meta.get("device_id") or "").strip()
                         if device_id:
                             client.publish(f"esp32cam/{class_name}/{device_id}/result", result_json)
                         client.publish(f"esp32cam/{class_name}/result", result_json)
@@ -1330,7 +1412,7 @@ def class_home(class_name):
     for student_id in sorted(students_dict.keys()):
         student_name = students_dict[student_id]
         status = present.get(student_id, "Vắng")
-        students.append({"name": student_name, "status": status})
+        students.append({"id": student_id, "name": student_name, "status": status})
     last_upload_url = None
     last_upload_info = None
     try:
@@ -1984,7 +2066,7 @@ def check_configuration():
         
     # 3. Check Admin Password
     if not os.environ.get("ADMIN_PASSWORD"):
-        print("ℹ️ ADMIN_PASSWORD mặc định là 'admin123'")
+        print("ℹ️ ADMIN_PASSWORD được tạo tự động và lưu tại classes/_system/admin_password")
         
     # 4. Check Database
     if USE_POSTGRES:
@@ -2065,7 +2147,17 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
-    print(f"\n🌐 Starting Flask server on port {port}")
+    local_ip = get_local_ip()
+    print(f"\n🌐 Starting Flask server on {local_ip}:{port}")
     print(f"🔧 Debug mode: {debug}\n")
     
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    try:
+        socketio.run(app, host=local_ip, port=port, debug=debug, use_reloader=debug)
+    except OSError as e:
+        if e.errno == 48:  # Address already in use
+            fallback_port = 5001 if port == 5000 else port + 1
+            print(f"\n⚠️  Cổng {port} đã bị chiếm dụng (thông thường do dịch vụ AirPlay của macOS).")
+            print(f"🔄 Tự động chuyển sang cổng dự phòng: {fallback_port} trên {local_ip}\n")
+            socketio.run(app, host=local_ip, port=fallback_port, debug=debug, use_reloader=debug)
+        else:
+            raise e

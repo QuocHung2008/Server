@@ -3,6 +3,7 @@ __pycache__/
 *.db
 *.pkl
 *.npz
+*.jpg
 venv/
 .env
 .DS_Store

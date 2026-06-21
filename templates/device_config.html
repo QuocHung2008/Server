@@ -8,26 +8,26 @@
     
     <!-- WiFi QR Code Generator -->
     <div class="classic-card overflow-hidden">
-        <div class="p-6 bg-slate-50 border-b border-slate-200">
-            <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <i class="fas fa-qrcode text-slate-600"></i>
+        <div class="p-6 bg-white/5 border-b border-white/10">
+            <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                <i class="fas fa-qrcode text-indigo-400"></i>
                 Tạo mã QR WiFi
             </h3>
-            <p class="text-sm text-slate-500 mt-1">Dùng để cấu hình nhanh WiFi cho ESP32 (nếu hỗ trợ)</p>
+            <p class="text-sm text-slate-400 mt-1">Dùng để cấu hình nhanh WiFi cho ESP32 (nếu hỗ trợ)</p>
         </div>
         <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
             <div class="space-y-4">
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">SSID (Tên Wifi)</label>
-                    <input id="wifiSSID" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Nhập tên Wifi">
+                    <label class="block text-sm font-semibold text-slate-300 mb-1.5">SSID (Tên Wifi)</label>
+                    <input id="wifiSSID" type="text" class="w-full px-3 py-2 border border-white/10 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="Nhập tên Wifi">
                 </div>
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Mật khẩu</label>
-                    <input id="wifiPass" type="text" class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Nhập mật khẩu">
+                    <label class="block text-sm font-semibold text-slate-300 mb-1.5">Mật khẩu</label>
+                    <input id="wifiPass" type="text" class="w-full px-3 py-2 border border-white/10 rounded-md focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="Nhập mật khẩu">
                 </div>
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Loại bảo mật</label>
-                    <select id="wifiType" class="w-full px-3 py-2 border border-slate-300 rounded-md outline-none">
+                    <label class="block text-sm font-semibold text-slate-300 mb-1.5">Loại bảo mật</label>
+                    <select id="wifiType" class="w-full px-3 py-2 border border-white/10 rounded-md outline-none">
                         <option value="WPA">WPA/WPA2</option>
                         <option value="WEP">WEP</option>
                         <option value="nopass">Không mật khẩu</option>
@@ -37,21 +37,21 @@
                     Tạo mã QR
                 </button>
             </div>
-            <div class="flex flex-col items-center justify-center bg-slate-50 rounded-lg border-2 border-dashed border-slate-200 p-4 min-h-[250px]">
-                <div id="qrcode" class="bg-white p-2 rounded shadow-sm"></div>
-                <p class="text-sm text-slate-500 mt-4 text-center">Quét mã này bằng điện thoại hoặc đưa trước Camera ESP32 (nếu mode scan bật)</p>
+            <div class="flex flex-col items-center justify-center bg-white/5 rounded-lg border-2 border-dashed border-white/10 p-4 min-h-[250px]">
+                <div id="qrcode" class="bg-white p-2.5 rounded-xl shadow-md border border-white/20"></div>
+                <p class="text-sm text-slate-400 mt-4 text-center">Quét mã này bằng điện thoại hoặc đưa trước Camera ESP32 (nếu mode scan bật)</p>
             </div>
         </div>
     </div>
 
     <!-- Cấu hình Server (Hardcoded) -->
     <div class="classic-card">
-        <div class="p-6 bg-slate-50 border-b border-slate-200">
-            <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <i class="fas fa-code text-slate-600"></i>
+        <div class="p-6 bg-white/5 border-b border-white/10">
+            <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                <i class="fas fa-code text-indigo-400"></i>
                 Code cấu hình (config.h)
             </h3>
-            <p class="text-sm text-slate-500 mt-1">Copy vào file source code ESP32 nếu cần flash lại</p>
+            <p class="text-sm text-slate-400 mt-1">Copy vào file source code ESP32 nếu cần flash lại</p>
         </div>
         <div class="p-6">
             <div class="bg-slate-900 text-slate-200 p-4 rounded-lg font-mono text-sm overflow-x-auto">
@@ -61,7 +61,7 @@ static char SERVER_URL[256] = "{{ request.url_root }}api/recognize";
 static char MQTT_HOST[128] = "broker.hivemq.com";
 static uint16_t MQTT_PORT = 1883;</pre>
             </div>
-            <p class="text-sm text-slate-500 mt-2 italic">* Lưu ý: Đây là tham số mẫu. Sử dụng script <code>generate_esp32_config.py</code> để có đầy đủ credential.</p>
+            <p class="text-sm text-slate-400 mt-2 italic">* Lưu ý: Đây là tham số mẫu. Sử dụng script <code>generate_esp32_config.py</code> để có đầy đủ credential.</p>
         </div>
     </div>
 </div>

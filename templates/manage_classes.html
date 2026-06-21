@@ -8,11 +8,11 @@
     <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-            <h2 class="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                <i class="fas fa-school text-blue-600"></i>
+            <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+                <i class="fas fa-school text-blue-400"></i>
                 Quản lý lớp học
             </h2>
-            <p class="text-slate-500 mt-1">Upload file Excel danh sách lớp (Format: DS_TenLop.xlsx)</p>
+            <p class="text-slate-400 mt-1">Upload file Excel danh sách lớp (Format: DS_TenLop.xlsx)</p>
         </div>
         <button 
             onclick="document.getElementById('uploadInput').click()" 
@@ -34,14 +34,14 @@
         <div class="flex items-start gap-4">
             <i class="fas fa-info-circle text-blue-500 text-xl mt-1"></i>
             <div class="flex-1">
-                <h3 class="font-bold text-slate-800 mb-2">Hướng dẫn tải file Excel</h3>
-                <ul class="text-sm text-slate-600 space-y-1">
+                <h3 class="font-bold text-white mb-2">Hướng dẫn tải file Excel</h3>
+                <ul class="text-sm text-slate-300 space-y-1">
                     <li><i class="fas fa-check text-green-500 mr-2"></i>Tên file: <code class="bg-slate-100 px-2 py-0.5 rounded border border-slate-300">DS_TenLop.xlsx</code> (Ví dụ: DS_12T1.xlsx)</li>
                     <li><i class="fas fa-check text-green-500 mr-2"></i>Cột 1: Mã học sinh</li>
                     <li><i class="fas fa-check text-green-500 mr-2"></i>Cột 2: Tên học sinh</li>
                     <li><i class="fas fa-check text-green-500 mr-2"></i>Dòng 1 là tiêu đề, dữ liệu bắt đầu từ dòng 2</li>
                 </ul>
-                <a href="{{ url_for('download_class_template') }}" class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-blue-600 hover:text-blue-800">
+                <a href="{{ url_for('download_class_template') }}" class="inline-flex items-center gap-2 mt-3 text-sm font-semibold text-blue-400 hover:text-blue-300">
                     <i class="fas fa-download"></i>
                     Tải file mẫu
                 </a>
@@ -54,33 +54,33 @@
         {% if classes %}
         <div class="overflow-x-auto">
             <table class="w-full">
-                <thead class="bg-slate-50 border-b border-slate-200">
+                <thead class="bg-slate-900/30 border-b border-white/10" style="backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
                     <tr>
-                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">
                             <i class="fas fa-graduation-cap mr-2"></i>Tên lớp
                         </th>
-                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">
                             <i class="fas fa-users mr-2"></i>Số học sinh
                         </th>
-                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                        <th class="px-6 py-4 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">
                             <i class="fas fa-calendar mr-2"></i>File Excel
                         </th>
-                        <th class="px-6 py-4 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">
+                        <th class="px-6 py-4 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">
                             Thao tác
                         </th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-200">
+                <tbody class="divide-y divide-white/5">
                     {% for class_name in classes %}
-                    <tr class="hover:bg-slate-50 transition-colors duration-150">
+                    <tr class="hover:bg-white/5 transition-colors duration-150">
                         <td class="px-6 py-4">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 bg-blue-100 rounded flex items-center justify-center border border-blue-200">
-                                    <span class="text-blue-700 font-bold text-xs">{{ class_name[:2] }}</span>
+                                <div class="w-8 h-8 bg-blue-500/20 rounded flex items-center justify-center border border-blue-500/30">
+                                    <span class="text-blue-300 font-bold text-xs">{{ class_name[:2] }}</span>
                                 </div>
                                 <div>
-                                    <p class="font-semibold text-slate-800">{{ class_name }}</p>
-                                    <p class="text-xs text-slate-500">Lớp học</p>
+                                    <p class="font-semibold text-white">{{ class_name }}</p>
+                                    <p class="text-xs text-slate-400">Lớp học</p>
                                 </div>
                             </div>
                         </td>
@@ -91,17 +91,17 @@
                             </span>
                         </td>
                         <td class="px-6 py-4">
-                            <code class="text-xs bg-slate-100 px-2 py-1 rounded border border-slate-300 font-mono text-slate-700">
+                            <code class="text-xs bg-white/5 px-2 py-1 rounded border border-white/10 font-mono text-slate-300">
                                 DS_{{ class_name }}.xlsx
                             </code>
                         </td>
                         <td class="px-6 py-4 text-right space-x-2">
-                            <a href="{{ url_for('view_class', class_name=class_name) }}" 
-                               class="text-blue-600 hover:text-blue-800 font-medium text-sm inline-flex items-center gap-1">
+                            <a href="{{ url_for('class_home', class_name=class_name) }}" 
+                               class="text-blue-400 hover:text-blue-300 font-medium text-sm inline-flex items-center gap-1">
                                 <i class="fas fa-eye"></i> Xem
                             </a>
                             <button onclick="confirmDelete('{{ class_name }}')" 
-                                    class="text-red-600 hover:text-red-800 font-medium text-sm inline-flex items-center gap-1 ml-3">
+                                    class="text-red-400 hover:text-red-300 font-medium text-sm inline-flex items-center gap-1 ml-3">
                                 <i class="fas fa-trash"></i> Xóa
                             </button>
                         </td>
@@ -111,12 +111,12 @@
             </table>
         </div>
         {% else %}
-        <div class="p-12 text-center">
-            <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-200">
+        <div class="classic-card p-8 text-center">
+            <div class="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/10">
                 <i class="fas fa-inbox text-slate-400 text-3xl"></i>
             </div>
-            <h3 class="text-lg font-bold text-slate-800 mb-2">Chưa có lớp học nào</h3>
-            <p class="text-slate-500">Hãy tải lên file Excel danh sách lớp để bắt đầu.</p>
+            <h3 class="text-lg font-bold text-white mb-2">Chưa có lớp học nào</h3>
+            <p class="text-slate-400">Hãy tải lên file Excel danh sách lớp để bắt đầu.</p>
         </div>
         {% endif %}
     </div>
@@ -155,7 +155,7 @@ function confirmDelete(className) {
 // Load student counts
 document.addEventListener('DOMContentLoaded', function() {
     {% for class_name in classes %}
-    fetch('/api/student_count/{{ class_name }}')
+    fetch('/api/class/{{ class_name }}/count')
         .then(response => response.json())
         .then(data => {
             document.getElementById('count-{{ class_name }}').textContent = data.count;
