@@ -5,7 +5,7 @@ import pickle
 from uuid import UUID
 from app.database import pool
 from app.config import settings
-from app.services.face_service import encode_face, known_encodings
+from app.services.face_service import face_service
 
 router = APIRouter(prefix="/api/students", tags=["students"])
 
@@ -37,7 +37,7 @@ async def create_student(
         await out_file.write(content)
         
     # encode face
-    encoding = await encode_face(content)
+    encoding = await face_service.encode_face(content)
     if encoding is None:
         raise HTTPException(status_code=400, detail="No face found in the image")
         
@@ -51,13 +51,17 @@ async def create_student(
                 RETURNING id
             ''', student_code, full_name, class_id, file_path, encoding_bytes)
             
-            # Update memory dict
+            # Update in-memory cache
             class_record = await conn.fetchrow('SELECT name FROM classes WHERE id = $1', class_id)
             if class_record:
                 class_name = class_record['name']
-                if class_name not in known_encodings:
-                    known_encodings[class_name] = []
-                known_encodings[class_name].append((encoding, str(student_id), full_name, student_code))
+                await face_service.add_student_encoding(
+                    student_id=student_id,
+                    class_name=class_name,
+                    full_name=full_name,
+                    student_code=student_code,
+                    encoding=encoding
+                )
                 
             return {"status": "success", "id": student_id}
         except Exception as e:

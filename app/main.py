@@ -10,22 +10,23 @@ import socketio
 
 from app.config import settings
 from app.services.socketio_service import sio
-# from app.database import init_db_pool, close_db_pool
-# from app.services.face_service import load_all_encodings
-# from app.services.auth_service import load_api_keys
+from app.database import init_db_pool, close_db_pool
+from app.services.face_service import face_service
+from app.services.auth_service import load_api_keys
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     print("Starting up...")
-    # await init_db_pool()
-    # await load_all_encodings()
-    # await load_api_keys()
+    await init_db_pool()
+    await face_service.load_all_encodings()
+    await load_api_keys()
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     yield
     # Shutdown
     print("Shutting down...")
-    # await close_db_pool()
+    face_service.shutdown()
+    await close_db_pool()
 
 app = FastAPI(lifespan=lifespan)
 

@@ -1,74 +1,55 @@
 import asyncio
-import asyncpg
-import sys
 import os
+import sys
 
-# Add root project path so we can import from app
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add root directory to sys.path to import app
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from sqlalchemy.ext.asyncio import create_async_engine
 from app.config import settings
+from app.models import Base
 
 async def init_db():
-    print(f"Connecting to {settings.DATABASE_URL} to initialize schema...")
+    """
+    Initialize database schema with all tables and indexes.
+    This script is idempotent - safe to run multiple times.
+    """
+    print(f"Connecting to database...")
     
-    conn = await asyncpg.connect(settings.DATABASE_URL)
+    # SQLAlchemy requires postgresql+asyncpg for async connections
+    db_url = settings.DATABASE_URL.replace("postgres://", "postgresql+asyncpg://").replace("postgresql://", "postgresql+asyncpg://")
+    
+    engine = create_async_engine(db_url, echo=True)
     
     try:
-        # Create schema
-        await conn.execute('''
-        CREATE TABLE IF NOT EXISTS classes (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name VARCHAR(100) UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        ''')
-        
-        await conn.execute('''
-        CREATE TABLE IF NOT EXISTS students (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            student_code VARCHAR(50) UNIQUE NOT NULL,
-            full_name VARCHAR(200) NOT NULL,
-            class_id UUID REFERENCES classes(id),
-            image_path TEXT,
-            face_encoding BYTEA,            -- numpy array serialized (pickle/bytes)
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        ''')
-        
-        await conn.execute('''
-        CREATE TABLE IF NOT EXISTS attendance_records (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            student_id UUID REFERENCES students(id),
-            class_id UUID REFERENCES classes(id),
-            device_id VARCHAR(100),
-            confidence FLOAT,
-            status VARCHAR(20) DEFAULT 'present',
-            recorded_at TIMESTAMP DEFAULT NOW()
-        );
-        ''')
-        
-        await conn.execute('''
-        CREATE TABLE IF NOT EXISTS api_keys (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            key_hash VARCHAR(64) UNIQUE NOT NULL,
-            label VARCHAR(100),
-            class_id UUID REFERENCES classes(id),
-            device_id VARCHAR(100),
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT NOW(),
-            last_used_at TIMESTAMP
-        );
-        ''')
-        
-        # Create indexes
-        await conn.execute('CREATE INDEX IF NOT EXISTS idx_attendance_recorded_at ON attendance_records(recorded_at DESC);')
-        await conn.execute('CREATE INDEX IF NOT EXISTS idx_attendance_class_time ON attendance_records(class_id, recorded_at DESC);')
-        
-        print("Schema initialized successfully.")
+        async with engine.begin() as conn:
+            print("\n" + "="*60)
+            print("Creating all tables and indexes from models...")
+            print("="*60 + "\n")
+            
+            # Create all tables with indexes defined in models
+            await conn.run_sync(Base.metadata.create_all)
+            
+            print("\n" + "="*60)
+            print("Database initialization completed successfully!")
+            print("="*60)
+            print("\nCreated tables:")
+            print("  - classes")
+            print("  - students (with idx_students_class)")
+            print("  - attendance_records (with idx_attendance_recorded_at, idx_attendance_class_time)")
+            print("  - api_keys (with idx_api_keys_active)")
+            print("\n")
+            
     except Exception as e:
-        print(f"Error initializing schema: {e}")
+        print(f"\n❌ Error initializing database: {e}")
+        sys.exit(1)
     finally:
-        await conn.close()
+        await engine.dispose()
 
 if __name__ == "__main__":
+    if not settings.DATABASE_URL:
+        print("❌ Error: DATABASE_URL environment variable is not set!")
+        print("Please set DATABASE_URL in your .env file or environment.")
+        sys.exit(1)
+        
     asyncio.run(init_db())

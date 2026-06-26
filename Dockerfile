@@ -28,4 +28,4 @@ RUN mkdir -p /app/uploads/faces
 EXPOSE 8000
 
 # Dùng sh -c để Railway có thể expand $PORT
-CMD ["sh", "-c", "gunicorn server:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
