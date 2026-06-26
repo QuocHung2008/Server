@@ -1,0 +1,11 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
+healthcheckPath = "/health"
+healthcheckTimeout = 300    # dlib build lâu
+
+[env]
+PORT = "8000"

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Dashboard{% endblock %}</title>
+    <!-- Tailwind CSS (Light mode only) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; background-color: #F8FAFC; color: #1E293B; }
+        .card { background-color: #FFFFFF; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); border: 1px solid #E2E8F0; border-radius: 0.75rem; }
+        .btn-primary { background-color: #2563EB; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 500; }
+        .btn-primary:hover { background-color: #1D4ED8; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Navbar -->
+    <nav class="bg-white border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex space-x-8">
+                    <a href="/" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-900">Dashboard</a>
+                    <a href="/attendance" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-500 hover:text-slate-900">Điểm danh realtime</a>
+                    <a href="/students" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-500 hover:text-slate-900">Sinh viên</a>
+                    <a href="/api_keys" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-500 hover:text-slate-900">API Keys</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
