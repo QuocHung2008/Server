@@ -27,5 +27,5 @@ RUN mkdir -p /app/uploads/faces
 
 EXPOSE 8000
 
-# Dùng 1 worker (quan trọng! face encodings in-memory)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Dùng sh -c để Railway có thể expand $PORT
+CMD ["sh", "-c", "gunicorn server:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120"]

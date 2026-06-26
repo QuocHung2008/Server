@@ -1912,13 +1912,7 @@ def api_today_attendance(class_name):
 
 @app.route("/health")
 def health():
-    """Health check endpoint"""
-    global mqtt_connected
-    return jsonify({
-        "status": "healthy",
-        "mqtt": "connected" if mqtt_connected else "disconnected",
-        "classes": len(get_all_classes())
-    }), 200
+    return jsonify({"status": "healthy"}), 200
 
 @app.route("/device/config")
 @login_required
